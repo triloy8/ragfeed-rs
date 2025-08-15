@@ -1,0 +1,11 @@
+[package]
+name = "rss-feeder"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }   # CLI arg parsing
+tokio = { version = "1", features = ["full"] }      # async runtime
+sqlx = { version = "0.7", features = ["postgres", "runtime-tokio-rustls", "uuid", "json"] }  # DB + migrations
+anyhow = "1.0"
+dotenvy = "0.15"
