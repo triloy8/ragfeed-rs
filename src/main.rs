@@ -1,8 +1,10 @@
 use clap::{Parser, Subcommand};
-use sqlx::{postgres::PgPoolOptions, PgPool};
 use anyhow::Result;
 use dotenvy::dotenv;
 use std::env;
+
+mod init;
+mod feed;
 
 #[derive(Parser)]
 #[command(name = "rag", about = "RAG pipeline CLI")]
@@ -50,14 +52,14 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Commands::Init => {
-            let _pool = init_db(&dsn).await?;
+            let _pool = init::init_db(&dsn).await?;
         }
         Commands::Feed { action } => match action {
             FeedAction::Add { url } => {
-                add_feed(&dsn, &url).await?;
+                feed::add_feed(&dsn, &url).await?;
             }
             FeedAction::Ls => {
-                list_feeds(&dsn).await?;
+                feed::list_feeds(&dsn).await?;
             }
         },
         Commands::Ingest => println!("TODO: ingest"),
@@ -67,72 +69,6 @@ async fn main() -> Result<()> {
         Commands::Eval => println!("TODO: eval"),
         Commands::Reindex => println!("TODO: reindex"),
         Commands::Gc => println!("TODO: gc"),
-    }
-
-    Ok(())
-}
-
-pub async fn init_db(dsn: &str) -> Result<PgPool> {
-    let pool = PgPoolOptions::new()
-        .max_connections(5)
-        .connect(dsn)
-        .await?;
-
-    // Apply any pending migrations (idempotent)
-    sqlx::migrate!().run(&pool).await?;
-
-    println!("Database initialized successfully");
-    Ok(pool)
-}
-
-pub async fn add_feed(dsn: &str, url: &str) -> Result<()> {
-    let pool = PgPoolOptions::new()
-        .max_connections(5)
-        .connect(dsn)
-        .await?;
-
-    // Check if feed already exists
-    let existing_feed = sqlx::query!(
-        "SELECT * FROM rag.feed WHERE url = $1",
-        url
-    )
-    .fetch_one(&pool)
-    .await;
-
-    match existing_feed {
-        Ok(_) => println!("Feed with URL {} already exists", url),
-        Err(sqlx::Error::RowNotFound) => {
-            // Insert new feed
-            let _result = sqlx::query!(
-                "INSERT INTO rag.feed (url, name) VALUES ($1, $2)",
-                url,
-                url.split('/').last().unwrap_or_default()
-            )
-            .execute(&pool)
-            .await?;
-            println!("Feed with URL {} added successfully", url);
-        }
-        Err(e) => return Err(e.into()),
-    }
-
-    Ok(())
-}
-
-pub async fn list_feeds(dsn: &str) -> Result<()> {
-    let pool = PgPoolOptions::new()
-        .max_connections(5)
-        .connect(dsn)
-        .await?;
-
-    // List all feeds
-    let feeds = sqlx::query!(
-        "SELECT * FROM rag.feed"
-    )
-    .fetch_all(&pool)
-    .await?;
-
-    for feed in feeds {
-        println!("Feed ID: {}, URL: {}", feed.feed_id, feed.url);
     }
 
     Ok(())
