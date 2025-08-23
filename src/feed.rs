@@ -1,55 +1,69 @@
+// src/feed.rs
 use anyhow::Result;
-use sqlx::{postgres::PgPoolOptions};
+use clap::{Args, Subcommand};
+use sqlx::PgPool;
 
-pub async fn add_feed(dsn: &str, url: &str) -> Result<()> {
-    let pool = PgPoolOptions::new()
-        .max_connections(5)
-        .connect(dsn)
-        .await?;
-
-    // Check if feed already exists
-    let existing_feed = sqlx::query!(
-        "SELECT * FROM rag.feed WHERE url = $1",
-        url
-    )
-    .fetch_one(&pool)
-    .await;
-
-    match existing_feed {
-        Ok(_) => println!("Feed with URL {} already exists", url),
-        Err(sqlx::Error::RowNotFound) => {
-            // Insert new feed
-            let _result = sqlx::query!(
-                "INSERT INTO rag.feed (url, name) VALUES ($1, $2)",
-                url,
-                url.split('/').last().unwrap_or_default()
-            )
-            .execute(&pool)
-            .await?;
-            println!("Feed with URL {} added successfully", url);
-        }
-        Err(e) => return Err(e.into()),
-    }
-
-    Ok(())
+/// `rag feed ...`
+#[derive(Args)]
+pub struct FeedCmd {
+    #[command(subcommand)]
+    pub cmd: FeedSub,
 }
 
-pub async fn list_feeds(dsn: &str) -> Result<()> {
-    let pool = PgPoolOptions::new()
-        .max_connections(5)
-        .connect(dsn)
-        .await?;
+#[derive(Subcommand)]
+pub enum FeedSub {
+    /// Add a new feed
+    Add {
+        url: String,
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(long, default_value_t = true)]
+        active: bool,
+    },
+    /// List feeds
+    Ls {
+        #[arg(long)]
+        active_only: bool,
+    },
+}
 
-    // List all feeds
-    let feeds = sqlx::query!(
-        "SELECT * FROM rag.feed"
-    )
-    .fetch_all(&pool)
-    .await?;
+pub async fn run(pool: &PgPool, args: FeedCmd) -> Result<()> {
+    match args.cmd {
+        FeedSub::Add { url, name, active } => {
+            sqlx::query!(
+                r#"
+                INSERT INTO rag.feed (url, name, is_active)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (url) DO UPDATE SET name=EXCLUDED.name, is_active=EXCLUDED.is_active
+                "#,
+                url,
+                name,
+                active
+            )
+            .execute(pool)
+            .await?;
+            println!("✅ Feed added: {url}");
+        }
+        FeedSub::Ls { active_only } => {
+            let rows = sqlx::query!(
+                r#"
+                SELECT feed_id, url, name, is_active, added_at
+                FROM rag.feed
+                WHERE ($1::bool IS NULL OR is_active = $1)
+                ORDER BY feed_id
+                "#,
+                if active_only { Some(true) } else { None }
+            )
+            .fetch_all(pool)
+            .await?;
 
-    for feed in feeds {
-        println!("Feed ID: {}, URL: {}", feed.feed_id, feed.url);
+            for row in rows {
+                println!(
+                    "[{}] {} ({:?}) active={:?} added_at={:?}",
+                    row.feed_id, row.url, row.name, row.is_active, row.added_at
+                );
+            }
+        }
     }
-
     Ok(())
 }

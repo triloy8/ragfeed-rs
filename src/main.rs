@@ -1,10 +1,12 @@
 use clap::{Parser, Subcommand};
+use sqlx::{PgPool};
 use anyhow::Result;
 use dotenvy::dotenv;
 use std::env;
 
 mod init;
 mod feed;
+mod ingest;
 
 #[derive(Parser)]
 #[command(name = "rag", about = "RAG pipeline CLI")]
@@ -18,57 +20,32 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    Init,
-    Feed {
-        #[command(subcommand)]
-        action: FeedAction,
-    },
-    Ingest,
-    Chunk,
-    Embed,
-    Query {
-        query: String,
-    },
-    Eval,
-    Reindex,
-    Gc,
-}
-
-#[derive(Subcommand)]
-enum FeedAction {
-    Add { url: String },
-    Ls,
+    Init(init::InitCmd),
+    Feed(feed::FeedCmd),
+    // Ingest(ingest::IngestCmd),
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenv().ok();
-
     let cli = Cli::parse();
     let dsn = cli
         .dsn
         .or_else(|| env::var("DATABASE_URL").ok())
         .expect("Please provide --dsn or set DATABASE_URL in .env");
 
+    let pool = PgPool::connect(&dsn).await?;
+
     match cli.command {
-        Commands::Init => {
-            let _pool = init::init_db(&dsn).await?;
-        }
-        Commands::Feed { action } => match action {
-            FeedAction::Add { url } => {
-                feed::add_feed(&dsn, &url).await?;
-            }
-            FeedAction::Ls => {
-                feed::list_feeds(&dsn).await?;
-            }
-        },
-        Commands::Ingest => println!("TODO: ingest"),
-        Commands::Chunk => println!("TODO: chunk"),
-        Commands::Embed => println!("TODO: embed"),
-        Commands::Query { query } => println!("TODO: query: {query}"),
-        Commands::Eval => println!("TODO: eval"),
-        Commands::Reindex => println!("TODO: reindex"),
-        Commands::Gc => println!("TODO: gc"),
+        Commands::Init(args) => init::run(&pool, args).await?,
+        Commands::Feed(args) => feed::run(&pool, args).await?,
+        // Commands::Ingest(args) => ingest::run(&pool, args).await?,
+        // Commands::Chunk => println!("TODO: chunk"),
+        // Commands::Embed => println!("TODO: embed"),
+        // Commands::Query { query } => println!("TODO: query: {query}"),
+        // Commands::Eval => println!("TODO: eval"),
+        // Commands::Reindex => println!("TODO: reindex"),
+        // Commands::Gc => println!("TODO: gc"),
     }
 
     Ok(())

@@ -1,15 +1,13 @@
 use anyhow::Result;
-use sqlx::{postgres::PgPoolOptions, PgPool};
+use clap::Args;
+use sqlx::PgPool;
 
-pub async fn init_db(dsn: &str) -> Result<PgPool> {
-    let pool = PgPoolOptions::new()
-        .max_connections(5)
-        .connect(dsn)
-        .await?;
+#[derive(Args)]
+pub struct InitCmd {}
 
-    // Apply any pending migrations (idempotent)
-    sqlx::migrate!().run(&pool).await?;
+pub async fn run(pool: &PgPool, _args: InitCmd) -> Result<()> {
+    sqlx::migrate!("./migrations").run(pool).await?;
 
-    println!("Database initialized successfully");
-    Ok(pool)
+    println!("✅ Database initialized");
+    Ok(())
 }
