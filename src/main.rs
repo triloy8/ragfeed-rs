@@ -22,7 +22,7 @@ struct Cli {
 enum Commands {
     Init(init::InitCmd),
     Feed(feed::FeedCmd),
-    // Ingest(ingest::IngestCmd),
+    Ingest(ingest::IngestCmd),
 }
 
 #[tokio::main]
@@ -39,7 +39,7 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Init(args) => init::run(&pool, args).await?,
         Commands::Feed(args) => feed::run(&pool, args).await?,
-        // Commands::Ingest(args) => ingest::run(&pool, args).await?,
+        Commands::Ingest(args) => ingest::run(&pool, args).await?,
         // Commands::Chunk => println!("TODO: chunk"),
         // Commands::Embed => println!("TODO: embed"),
         // Commands::Query { query } => println!("TODO: query: {query}"),
