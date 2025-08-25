@@ -7,6 +7,8 @@ use std::env;
 mod init;
 mod feed;
 mod ingest;
+mod chunk;
+mod tokenizer;
 
 #[derive(Parser)]
 #[command(name = "rag", about = "RAG pipeline CLI")]
