@@ -1,4 +1,3 @@
-// src/ingest.rs
 use anyhow::Result;
 use sqlx::{PgPool};
 use rss::Channel;

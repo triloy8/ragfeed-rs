@@ -25,6 +25,7 @@ enum Commands {
     Init(init::InitCmd),
     Feed(feed::FeedCmd),
     Ingest(ingest::IngestCmd),
+    Chunk(chunk::ChunkCmd),
 }
 
 #[tokio::main]
@@ -42,7 +43,7 @@ async fn main() -> Result<()> {
         Commands::Init(args) => init::run(&pool, args).await?,
         Commands::Feed(args) => feed::run(&pool, args).await?,
         Commands::Ingest(args) => ingest::run(&pool, args).await?,
-        // Commands::Chunk => println!("TODO: chunk"),
+        Commands::Chunk(args) => chunk::run(&pool, args).await?,
         // Commands::Embed => println!("TODO: embed"),
         // Commands::Query { query } => println!("TODO: query: {query}"),
         // Commands::Eval => println!("TODO: eval"),

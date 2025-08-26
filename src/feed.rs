@@ -1,4 +1,3 @@
-// src/feed.rs
 use anyhow::Result;
 use clap::{Args, Subcommand};
 use sqlx::PgPool;
