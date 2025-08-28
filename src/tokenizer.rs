@@ -5,6 +5,48 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
+use tokenizers::Tokenizer;
+
+#[derive(Debug, Clone)]
+pub struct E5Tokenizer {
+    inner: Tokenizer,
+}
+
+impl E5Tokenizer {
+    /// force loads intfloat/e5-small-v2 tokenizer from the HF Hub for now
+    /// no padding/truncation is configured for now
+    pub fn new() -> Result<Self> {
+        let tok = Tokenizer::from_pretrained("intfloat/e5-small-v2", None)
+            .map_err(|e| anyhow!("{}", e))?;
+        Ok(Self { inner: tok })
+    }
+
+    /// encode a **query**: adds "query: " and special tokens
+    pub fn ids_query(&self, text: &str) -> Result<Vec<u32>> {
+        let enc = self.inner
+            .encode(format!("query: {text}"), true)
+            .map_err(|e| anyhow!("{}", e))?;
+        Ok(enc.get_ids().to_vec())
+    }
+
+    /// encode a **passage**: adds "passage: " and special tokens
+    pub fn ids_passage(&self, text: &str) -> Result<Vec<u32>> {
+        let enc = self.inner.encode(format!("passage: {text}"), true)
+        .map_err(|e| anyhow!("{}", e))?;
+        Ok(enc.get_ids().to_vec())
+    }
+
+    /// decode token IDs back to text, **keeping** special tokens and prefixes
+    pub fn decode_ids(&self, ids: &[u32]) -> Result<String> {
+        // skip_special=false -> keep tokens like [CLS]/[SEP]/[PAD] if present.
+        self.inner.decode(ids, false)
+            .map_err(|e| anyhow!("{}", e))
+    }
+
+    /// access the inner tokenizer if needed.
+    pub fn inner(&self) -> &Tokenizer { &self.inner }
+}
+
 #[derive(Debug)]
 pub struct Gpt2Tokenizer {
     // string token -> id

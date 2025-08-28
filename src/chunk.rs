@@ -1,10 +1,9 @@
-// src/chunk.rs
 use sqlx::Row; // .get()
 use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use sqlx::PgPool;
 
-use crate::tokenizer::Gpt2Tokenizer;
+use crate::tokenizer::E5Tokenizer;
 
 #[derive(clap::Args)]
 pub struct ChunkCmd {
@@ -13,14 +12,13 @@ pub struct ChunkCmd {
     #[arg(long, default_value_t = 350)] tokens_target: usize,
     #[arg(long, default_value_t = 80)]  overlap: usize,
     #[arg(long, default_value_t = 24)]  max_chunks_per_doc: usize,
+    #[arg(long, default_value_t = false)] force: bool,
 }
 
 pub async fn run(pool: &PgPool, args: ChunkCmd) -> Result<()> {
     // build tokenizer (env overrides, sensible defaults)
-    let vocab = std::env::var("TOKENIZER_VOCAB").unwrap_or_else(|_| "data/vocab.json".into());
-    let merges = std::env::var("TOKENIZER_MERGES").unwrap_or_else(|_| "data/merges.txt".into());
-    let mut tok = Gpt2Tokenizer::from_files(&vocab, &merges)
-        .with_context(|| format!("Loading tokenizer from {vocab} and {merges}"))?;
+    let tok: E5Tokenizer = E5Tokenizer::new()
+        .context("init E5 tokenizer")?;
 
     // select candidate docs
     let docs = select_docs(pool, &args).await?;
@@ -37,8 +35,9 @@ pub async fn run(pool: &PgPool, args: ChunkCmd) -> Result<()> {
         if text.trim().is_empty() { continue; }
 
         // tokenize once per doc (encode needs &mut self)
-        let ids: Vec<usize> = tok.encode(text)
+        let ids: Vec<u32> = tok.ids_passage(text)
             .with_context(|| format!("tokenize doc_id={}", doc_id))?;
+
         if ids.is_empty() {
             sqlx::query!("UPDATE rag.document SET status='chunked' WHERE doc_id=$1", doc_id)
                 .execute(pool).await?;
@@ -55,7 +54,7 @@ pub async fn run(pool: &PgPool, args: ChunkCmd) -> Result<()> {
         // insert chunks (no md5 for now, optional in schema)
         let mut inserted = 0usize;
         for (i, id_slice) in slices.into_iter().enumerate() {
-            let chunk_text = tok.decode(id_slice)
+            let chunk_text = tok.decode_ids(id_slice)
                 .with_context(|| format!("decode chunk {} for doc_id={}", i, doc_id))?;
             if chunk_text.trim().is_empty() { continue; }
 
@@ -90,33 +89,31 @@ pub async fn run(pool: &PgPool, args: ChunkCmd) -> Result<()> {
 }
 
 async fn select_docs(pool: &PgPool, args: &ChunkCmd) -> Result<Vec<(i64, Option<String>)>> {
-    let ts = parse_since(&args.since)?;       // Option<DateTime<Utc>>
-    let doc_id = args.doc_id;                 // Option<i64>
+    let ts = parse_since(&args.since)?;
+    let doc_id = args.doc_id;
+    let force = args.force;
 
     // one query that handles both optional filters
     let rows = sqlx::query(
         r#"
         SELECT doc_id, text_clean
         FROM rag.document
-        WHERE status = 'ingest'
-          AND ($1::bigint IS NULL OR doc_id = $1)
+        WHERE ($3::bool OR status = 'ingest')        -- NEW: ignore status when forced
+          AND ($1::bigint      IS NULL OR doc_id = $1)
           AND ($2::timestamptz IS NULL OR fetched_at >= $2)
         ORDER BY doc_id DESC
         LIMIT 1000
         "#
     )
-    .bind(doc_id)  // $1
-    .bind(ts)      // $2
+    .bind(doc_id) // $1
+    .bind(ts)     // $2
+    .bind(force)  // $3
     .fetch_all(pool)
     .await?;
 
     // map raw rows into something simple: (doc_id, text_clean)
     let docs = rows.into_iter()
-        .map(|row| {
-            let doc_id: i64 = row.get("doc_id");
-            let text_clean: Option<String> = row.get("text_clean");
-            (doc_id, text_clean)
-        })
+        .map(|row| (row.get::<i64,_>("doc_id"), row.get::<Option<String>,_>("text_clean")))
         .collect();
 
     Ok(docs)
@@ -144,13 +141,12 @@ fn parse_since(since: &Option<String>) -> Result<Option<DateTime<Utc>>> {
     Ok(None)
 }
 
-fn chunk_token_ids<'a>(
-    ids: &'a [usize],
+pub fn chunk_token_ids<'a>(
+    ids: &'a [u32],
     target: usize,
     overlap: usize,
     max_chunks: usize,
-) -> Vec<&'a [usize]> {
-    if ids.is_empty() { return Vec::new(); }
+) -> Vec<&'a [u32]> {
     let target = target.max(1);
     let overlap = overlap.min(target.saturating_sub(1));
 
