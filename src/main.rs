@@ -11,6 +11,7 @@ mod chunk;
 mod tokenizer;
 mod embed;
 mod stats;
+mod reindex;
 
 #[derive(Parser)]
 #[command(name = "rag", about = "RAG pipeline CLI")]
@@ -30,6 +31,7 @@ enum Commands {
     Chunk(chunk::ChunkCmd),
     Embed(embed::EmbedCmd),
     Stats(stats::StatsCmd),
+    Reindex(reindex::ReindexCmd),
 }
 
 #[tokio::main]
@@ -50,9 +52,9 @@ async fn main() -> Result<()> {
         Commands::Chunk(args) => chunk::run(&pool, args).await?,
         Commands::Embed(args) => embed::run(&pool, args).await?,
         Commands::Stats(args) => stats::run(&pool, args).await?,
+        Commands::Reindex(args) => reindex::run(&pool, args).await?,
         // Commands::Query { query } => println!("TODO: query: {query}"),
         // Commands::Eval => println!("TODO: eval"),
-        // Commands::Reindex => println!("TODO: reindex"),
         // Commands::Gc => println!("TODO: gc"),
     }
 

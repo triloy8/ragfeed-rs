@@ -118,6 +118,46 @@ pub async fn run(pool: &PgPool, args: StatsCmd) -> Result<()> {
         }
     }
 
+    // index metadata: ivfflat lists, size, last_analyze
+    let idx_row = sqlx::query!(
+        r#"
+        SELECT substring(pg_get_indexdef(i.indexrelid) from 'lists = ([0-9]+)') AS lists
+        FROM pg_index i
+        JOIN pg_class c ON c.oid = i.indexrelid
+        JOIN pg_namespace nsp ON nsp.oid = c.relnamespace
+        WHERE nsp.nspname = 'rag' AND c.relname = 'embedding_vec_ivf_idx'
+        "#
+    )
+    .fetch_optional(pool)
+    .await?;
+    let lists_val: Option<i32> = idx_row
+        .as_ref()
+        .and_then(|r| r.lists.as_ref())
+        .and_then(|s| s.parse::<i32>().ok());
+
+    let size_row = sqlx::query!(
+        r#"SELECT pg_size_pretty(pg_relation_size('rag.embedding_vec_ivf_idx')) AS size"#
+    )
+    .fetch_optional(pool)
+    .await?;
+    let size_pretty = size_row.and_then(|r| r.size);
+
+    let analyze_row = sqlx::query!(
+        r#"
+        SELECT last_analyze
+        FROM pg_stat_user_tables
+        WHERE schemaname = 'rag' AND relname = 'embedding'
+        "#
+    )
+    .fetch_optional(pool)
+    .await?;
+
+    let mut line = String::from("ivfflat");
+    if let Some(k) = lists_val { line.push_str(&format!(" lists={}", k)); }
+    if let Some(s) = size_pretty { line.push_str(&format!(" size={}", s)); }
+    if let Some(r) = analyze_row { line.push_str(&format!(" last_analyze={:?}", r.last_analyze)); }
+    println!("🧭 Index: {}", line);
+
     // coverage (single-model assumption): embedded vs total chunks
     let totals = sqlx::query!(
         r#"
