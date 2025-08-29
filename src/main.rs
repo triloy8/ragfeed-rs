@@ -10,6 +10,7 @@ mod ingest;
 mod chunk;
 mod tokenizer;
 mod inspect;
+mod embed;
 
 #[derive(Parser)]
 #[command(name = "rag", about = "RAG pipeline CLI")]
@@ -28,6 +29,7 @@ enum Commands {
     Ingest(ingest::IngestCmd),
     Chunk(chunk::ChunkCmd),
     Inspect(inspect::InspectCmd),
+    Embed(embed::EmbedCmd),
 }
 
 #[tokio::main]
@@ -47,7 +49,7 @@ async fn main() -> Result<()> {
         Commands::Ingest(args) => ingest::run(&pool, args).await?,
         Commands::Chunk(args) => chunk::run(&pool, args).await?,
         Commands::Inspect(args) => inspect::run(&pool, args).await?,
-        // Commands::Embed => println!("TODO: embed"),
+        Commands::Embed(args) => embed::run(&pool, args).await?,
         // Commands::Query { query } => println!("TODO: query: {query}"),
         // Commands::Eval => println!("TODO: eval"),
         // Commands::Reindex => println!("TODO: reindex"),
