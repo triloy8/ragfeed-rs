@@ -28,5 +28,5 @@ sqlx-migrate = "0.7"
 
 [features]
 default = []
-# cuda support
+# cuda support w/ --features cuda
 cuda = ["ort/cuda"]
