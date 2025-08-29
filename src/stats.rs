@@ -109,7 +109,7 @@ pub async fn run(pool: &PgPool, args: StatsCmd) -> Result<()> {
             // show top 3 succinctly
             let mut first = true;
             print!("   Models: ");
-            for (i, m) in models.iter().take(3).enumerate() {
+            for m in models.iter().take(3) {
                 if !first { print!(", "); } else { first = false; }
                 print!("{} ({} )", m.model, m.cnt.unwrap_or(0));
             }
