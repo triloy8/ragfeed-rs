@@ -12,6 +12,7 @@ mod tokenizer;
 mod embed;
 mod stats;
 mod reindex;
+mod gc;
 
 #[derive(Parser)]
 #[command(name = "rag", about = "RAG pipeline CLI")]
@@ -32,6 +33,7 @@ enum Commands {
     Embed(embed::EmbedCmd),
     Stats(stats::StatsCmd),
     Reindex(reindex::ReindexCmd),
+    Gc(gc::GcCmd),
 }
 
 #[tokio::main]
@@ -53,9 +55,9 @@ async fn main() -> Result<()> {
         Commands::Embed(args) => embed::run(&pool, args).await?,
         Commands::Stats(args) => stats::run(&pool, args).await?,
         Commands::Reindex(args) => reindex::run(&pool, args).await?,
+        Commands::Gc(args) => gc::run(&pool, args).await?,
         // Commands::Query { query } => println!("TODO: query: {query}"),
         // Commands::Eval => println!("TODO: eval"),
-        // Commands::Gc => println!("TODO: gc"),
     }
 
     Ok(())
