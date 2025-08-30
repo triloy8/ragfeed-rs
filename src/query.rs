@@ -157,7 +157,7 @@ async fn fetch_ann_candidates(
         return Ok(out);
     }
 
-    // With filters
+    // with filters
     use sqlx::Row;
     let rows = sqlx::query(
         r#"
