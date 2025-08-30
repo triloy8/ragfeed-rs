@@ -7,18 +7,26 @@ pub struct StatsCmd {
     #[arg(long)] feed: Option<i32>, // show a scoped view for this feed ID
     #[arg(long)] doc: Option<i64>, // show a snapshot for this document ID (replaces `inspect doc <id>`)
     #[arg(long)] chunk: Option<i64>, // show a snapshot for this chunk ID (replaces `inspect chunk <id>`)
+
+    /// Number of docs to list in --feed view (default: 10)
+    #[arg(long, default_value_t = 10)]
+    pub doc_limit: i64,
+
+    /// Number of chunks to list in --doc view (default: 10)
+    #[arg(long, default_value_t = 10)]
+    pub chunk_limit: i64,
 }
 
 pub async fn run(pool: &PgPool, args: StatsCmd) -> Result<()> {
     // snapshot modes fully replace the old `inspect` command
     if let Some(id) = args.doc {
-        return snapshot_doc(pool, id).await;
+        return snapshot_doc(pool, id, args.chunk_limit).await;
     }
     if let Some(id) = args.chunk {
         return snapshot_chunk(pool, id).await;
     }
     if let Some(feed_id) = args.feed {
-        return feed_stats(pool, feed_id).await;
+        return feed_stats(pool, feed_id, args.doc_limit).await;
     }
 
     // feeds listing (verbose)
@@ -193,7 +201,7 @@ pub async fn run(pool: &PgPool, args: StatsCmd) -> Result<()> {
     Ok(())
 }
 
-async fn snapshot_doc(pool: &PgPool, id: i64) -> Result<()> {
+async fn snapshot_doc(pool: &PgPool, id: i64, chunk_limit: i64) -> Result<()> {
     let row = sqlx::query!(
         r#"
         SELECT doc_id, feed_id, source_url, source_title, published_at,
@@ -217,10 +225,31 @@ async fn snapshot_doc(pool: &PgPool, id: i64) -> Result<()> {
     println!("  Error: {:?}", row.error_msg);
     println!("  Preview: {:?}", row.preview);
 
+    // list chunks (IDs visible)
+    let rows = sqlx::query!(
+        r#"
+        SELECT chunk_id, chunk_index, token_count
+        FROM rag.chunk
+        WHERE doc_id = $1
+        ORDER BY chunk_index ASC
+        LIMIT $2
+        "#,
+        id,
+        chunk_limit
+    )
+    .fetch_all(pool)
+    .await?;
+    if !rows.is_empty() {
+        println!("  Chunks (first {}):", rows.len());
+        for r in rows {
+            println!("    chunk_id={}  idx={}  tokens={}", r.chunk_id, r.chunk_index.unwrap_or(0), r.token_count.unwrap_or(0));
+        }
+    }
+
     Ok(())
 }
 
-async fn feed_stats(pool: &PgPool, feed_id: i32) -> Result<()> {
+async fn feed_stats(pool: &PgPool, feed_id: i32, doc_limit: i64) -> Result<()> {
     // feed header
     let f = sqlx::query!(
         r#"
@@ -380,6 +409,33 @@ async fn feed_stats(pool: &PgPool, feed_id: i32) -> Result<()> {
         .await?;
         for r in rows {
             println!("     {:>6}  doc={}  {}", r.pending.unwrap_or(0), r.doc_id, r.source_title.unwrap_or_default());
+        }
+    }
+
+    // latest docs (IDs visible)
+    let rows = sqlx::query!(
+        r#"
+        SELECT doc_id, status, fetched_at, source_title
+        FROM rag.document
+        WHERE feed_id = $1
+        ORDER BY fetched_at DESC NULLS LAST, doc_id DESC
+        LIMIT $2
+        "#,
+        feed_id,
+        doc_limit
+    )
+    .fetch_all(pool)
+    .await?;
+    if !rows.is_empty() {
+        println!("📜 Docs (latest {}):", rows.len());
+        for r in rows {
+            println!(
+                "  doc_id={}  status={}  fetched={:?}  {}",
+                r.doc_id,
+                r.status.unwrap_or_default(),
+                r.fetched_at,
+                r.source_title.unwrap_or_default()
+            );
         }
     }
 
