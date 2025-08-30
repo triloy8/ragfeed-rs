@@ -2510,6 +2510,7 @@ dependencies = [
  "sqlx-migrate",
  "tokenizers",
  "tokio",
+ "url",
 ]
 
 [[package]]

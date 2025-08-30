@@ -5,6 +5,9 @@ use reqwest::Client;
 use scraper::{Html, Selector};
 use std::time::Duration;
 use chrono::{Utc};
+use url::Url;
+
+use crate::extractor;
 
 #[derive(clap::Args)]
 pub struct IngestCmd {
@@ -46,12 +49,14 @@ pub async fn run(pool: &PgPool, args: IngestCmd) -> Result<()> {
             if let Some(link) = item.link() {
                 // fetch article
                 let html = client.get(link).send().await?.text().await?;
-                let doc = Html::parse_document(&html);
-                let sel = Selector::parse("p").unwrap();
-                let text: String = doc.select(&sel)
-                    .map(|p| p.text().collect::<String>())
-                    .collect::<Vec<_>>()
-                    .join("\n");
+
+                // per-host extraction with fallback
+                let host = Url::parse(link).ok().and_then(|u| u.host_str().map(|s| s.to_string())).unwrap_or_default();
+                let extracted = extractor::extract(&host, &html);
+                let (text, status, error_msg) = match extracted {
+                    Some(t) if !t.trim().is_empty() => (t, "ingest", None),
+                    _ => (String::new(), "error", Some(String::from("extraction-empty"))),
+                };
 
                 let published_at = item.pub_date()
                     .and_then(|s| chrono::DateTime::parse_from_rfc2822(s).ok())
@@ -63,8 +68,8 @@ pub async fn run(pool: &PgPool, args: IngestCmd) -> Result<()> {
                     sqlx::query!(
                         r#"
                         INSERT INTO rag.document (feed_id, source_url, source_title,
-                            published_at, fetched_at, content_hash, raw_html, text_clean, status)
-                        VALUES ($1, $2, $3, $4, now(), md5($5), $6, $7, 'ingest')
+                            published_at, fetched_at, content_hash, raw_html, text_clean, status, error_msg)
+                        VALUES ($1, $2, $3, $4, now(), md5($5), $6, $7, $8, $9)
                         ON CONFLICT (source_url) DO UPDATE
                           SET source_title = EXCLUDED.source_title,
                               published_at = COALESCE(EXCLUDED.published_at, rag.document.published_at),
@@ -72,8 +77,8 @@ pub async fn run(pool: &PgPool, args: IngestCmd) -> Result<()> {
                               content_hash = EXCLUDED.content_hash,
                               raw_html     = EXCLUDED.raw_html,
                               text_clean   = EXCLUDED.text_clean,
-                              status       = 'ingest',
-                              error_msg    = NULL
+                              status       = EXCLUDED.status,
+                              error_msg    = EXCLUDED.error_msg
                         "#,
                         f.feed_id,
                         link,
@@ -81,7 +86,9 @@ pub async fn run(pool: &PgPool, args: IngestCmd) -> Result<()> {
                         published_at,   // Option<DateTime<Utc>>
                         text,
                         html.as_bytes(),
-                        text
+                        text,
+                        status,
+                        error_msg
                     )
                     .execute(pool)
                     .await?;
@@ -90,8 +97,8 @@ pub async fn run(pool: &PgPool, args: IngestCmd) -> Result<()> {
                     sqlx::query!(
                         r#"
                         INSERT INTO rag.document (feed_id, source_url, source_title,
-                            published_at, fetched_at, content_hash, raw_html, text_clean, status)
-                        VALUES ($1, $2, $3, $4, now(), md5($5), $6, $7, 'ingest')
+                            published_at, fetched_at, content_hash, raw_html, text_clean, status, error_msg)
+                        VALUES ($1, $2, $3, $4, now(), md5($5), $6, $7, $8, $9)
                         ON CONFLICT (source_url) DO NOTHING
                         "#,
                         f.feed_id,
@@ -100,7 +107,9 @@ pub async fn run(pool: &PgPool, args: IngestCmd) -> Result<()> {
                         published_at,   // Option<DateTime<Utc>>
                         text,
                         html.as_bytes(),
-                        text
+                        text,
+                        status,
+                        error_msg
                     )
                     .execute(pool)
                     .await?;

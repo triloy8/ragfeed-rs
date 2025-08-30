@@ -22,6 +22,7 @@ pgvector = { version = "0.3", features = ["sqlx"] }
 ndarray = { version = "0.16", features = ["std"] }
 # ort community crate, features for CUDA
 ort = { version = "2.0.0-rc.10", default-features = false, features = ["download-binaries", "ndarray"] }
+url = "2"
 
 [build-dependencies]
 sqlx-migrate = "0.7"

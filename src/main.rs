@@ -9,6 +9,7 @@ mod feed;
 mod ingest;
 mod chunk;
 mod tokenizer;
+mod extractor;
 mod encoder;
 mod embed;
 mod stats;
