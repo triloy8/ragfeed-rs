@@ -11,8 +11,6 @@ pub struct IngestCmd {
     #[arg(long)] feed: Option<i32>,
     #[arg(long)] feed_url: Option<String>,
     #[arg(long, default_value_t=200)] limit: usize,
-    #[arg(long, default_value_t=2)] concurrency: usize,
-    #[arg(long)] since: Option<String>, // parse into chrono::DateTime
     #[arg(long)] force_refetch: bool,
 }
 
@@ -59,24 +57,54 @@ pub async fn run(pool: &PgPool, args: IngestCmd) -> Result<()> {
                     .and_then(|s| chrono::DateTime::parse_from_rfc2822(s).ok())
                     .map(|dt| dt.with_timezone(&Utc));
 
-                // insert into rag.document
-                sqlx::query!(
-                    r#"
-                    INSERT INTO rag.document (feed_id, source_url, source_title,
-                        published_at, fetched_at, content_hash, raw_html, text_clean, status)
-                    VALUES ($1, $2, $3, $4, now(), md5($5), $6, $7, 'ingest')
-                    ON CONFLICT (source_url) DO NOTHING
-                    "#,
-                    f.feed_id,
-                    link,
-                    item.title(),
-                    published_at,   // Option<DateTime<Utc>>
-                    text,
-                    html.as_bytes(),
-                    text
-                )
-                .execute(pool)
-                .await?;
+                // insert or upsert into rag.document
+                if args.force_refetch {
+                    // Refresh existing rows on conflict
+                    sqlx::query!(
+                        r#"
+                        INSERT INTO rag.document (feed_id, source_url, source_title,
+                            published_at, fetched_at, content_hash, raw_html, text_clean, status)
+                        VALUES ($1, $2, $3, $4, now(), md5($5), $6, $7, 'ingest')
+                        ON CONFLICT (source_url) DO UPDATE
+                          SET source_title = EXCLUDED.source_title,
+                              published_at = COALESCE(EXCLUDED.published_at, rag.document.published_at),
+                              fetched_at   = now(),
+                              content_hash = EXCLUDED.content_hash,
+                              raw_html     = EXCLUDED.raw_html,
+                              text_clean   = EXCLUDED.text_clean,
+                              status       = 'ingest',
+                              error_msg    = NULL
+                        "#,
+                        f.feed_id,
+                        link,
+                        item.title(),
+                        published_at,   // Option<DateTime<Utc>>
+                        text,
+                        html.as_bytes(),
+                        text
+                    )
+                    .execute(pool)
+                    .await?;
+                } else {
+                    // Insert only new rows; ignore duplicates
+                    sqlx::query!(
+                        r#"
+                        INSERT INTO rag.document (feed_id, source_url, source_title,
+                            published_at, fetched_at, content_hash, raw_html, text_clean, status)
+                        VALUES ($1, $2, $3, $4, now(), md5($5), $6, $7, 'ingest')
+                        ON CONFLICT (source_url) DO NOTHING
+                        "#,
+                        f.feed_id,
+                        link,
+                        item.title(),
+                        published_at,   // Option<DateTime<Utc>>
+                        text,
+                        html.as_bytes(),
+                        text
+                    )
+                    .execute(pool)
+                    .await?;
+                }
             }
         }
     }
