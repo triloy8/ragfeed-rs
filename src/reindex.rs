@@ -5,7 +5,7 @@ use sqlx::PgPool;
 #[derive(Args, Debug)]
 pub struct ReindexCmd {
     #[arg(long)] lists: Option<i32>, // force a specific number of IVF lists (K). If omitted, uses sqrt(n) heuristic.
-    #[arg(long, default_value_t = false)] dry_run: bool, // print planned actions and exit without changing anything.
+    #[arg(long, default_value_t = false)] apply: bool, // default is plan-only; use --apply to execute
 }
 
 pub async fn run(pool: &PgPool, args: ReindexCmd) -> Result<()> {
@@ -50,12 +50,15 @@ pub async fn run(pool: &PgPool, args: ReindexCmd) -> Result<()> {
         Action::Reindex
     };
 
-    // report plan
+    // report plan (plan-only default)
     println!(
-        "Reindex plan: rows={} current_lists={:?} desired_lists={} action={:?} analyze=TRUE",
+        "📝 Reindex plan — rows={} current_lists={:?} desired_lists={} action={:?} analyze=TRUE",
         n, current_lists, desired_lists, action
     );
-    if args.dry_run { return Ok(()); }
+    if !args.apply {
+        println!("   Use --apply to execute.");
+        return Ok(());
+    }
 
     // execute
     match action {
@@ -87,9 +90,9 @@ pub async fn run(pool: &PgPool, args: ReindexCmd) -> Result<()> {
     sqlx::query("ANALYZE rag.embedding")
         .execute(pool)
         .await?;
-    println!("Analyzed rag.embedding");
+    println!("📊 Analyzed rag.embedding");
 
-    println!("Reindex completed.");
+    println!("✅ Reindex completed.");
     Ok(())
 }
 
