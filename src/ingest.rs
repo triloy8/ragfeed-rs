@@ -1,10 +1,8 @@
 use anyhow::Result;
-use sqlx::{PgPool};
+use sqlx::PgPool;
 use rss::Channel;
 use reqwest::Client;
-use scraper::{Html, Selector};
-use std::time::Duration;
-use chrono::{Utc};
+use chrono::Utc;
 use url::Url;
 
 use crate::extractor;
@@ -15,13 +13,11 @@ pub struct IngestCmd {
     #[arg(long)] feed_url: Option<String>,
     #[arg(long, default_value_t=200)] limit: usize,
     #[arg(long)] force_refetch: bool,
+    #[arg(long, default_value_t=false)] apply: bool, // default is plan-only (no network, no writes)
+    #[arg(long, default_value_t=10)] plan_limit: usize, // how many feeds to list in plan
 }
 
 pub async fn run(pool: &PgPool, args: IngestCmd) -> Result<()> {
-    let client = Client::builder()
-        .timeout(Duration::from_secs(20))
-        .build()?;
-
     // resolve feeds — single parameterized query (no branching)
     let feeds = sqlx::query!(
         r#"
@@ -39,6 +35,24 @@ pub async fn run(pool: &PgPool, args: IngestCmd) -> Result<()> {
     )
     .fetch_all(pool)
     .await?;
+
+    // plan-only default: do not perform network calls or DB writes
+    if !args.apply {
+        let mode = if args.force_refetch { "upsert" } else { "insert-only" };
+        println!(
+            "📝 Ingest plan — feeds={} mode={} limit={}",
+            feeds.len(), mode, args.limit
+        );
+        for f in feeds.iter().take(args.plan_limit) {
+            println!("  feed_id={} url={} name={}", f.feed_id, f.url, f.name.clone().unwrap_or_default());
+        }
+        if feeds.len() > args.plan_limit { println!("  ... ({} more)", feeds.len() - args.plan_limit); }
+        println!("   Use --apply to fetch and write.");
+        return Ok(());
+    }
+
+    // APPLY: perform network calls and writes
+    let client = Client::new();
 
     // fetch + parse each feed
     for f in feeds {

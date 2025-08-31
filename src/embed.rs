@@ -18,17 +18,38 @@ pub struct EmbedCmd {
     #[arg(long, default_value_t = 128)] batch: usize,
     #[arg(long)] max: Option<i64>,
     #[arg(long, default_value_t = false)] force: bool,
+    #[arg(long, default_value_t = false)] apply: bool, // default is plan-only (no model calls, no writes)
+    #[arg(long, default_value_t = 10)] plan_limit: usize, // how many chunk IDs to list in plan
 }
 
 pub async fn run(pool: &PgPool, args: EmbedCmd) -> Result<()> {
-    // Build encoder (tokenizer + ONNX session)
-    let mut encoder = E5Encoder::new(&args.model_id, args.onnx_filename.as_deref(), args.device)?;
-
-    // effective model tag (stored in DB)
-    let model_tag = format!("{}@onnx-{}", args.model_id, match args.device { Device::Cpu => "cpu", Device::Cuda => "cuda" });
+    // effective model tag (stored in DB); plan-only should not build model
+    let model_tag = format!(
+        "{}@onnx-{}",
+        args.model_id,
+        match args.device { Device::Cpu => "cpu", Device::Cuda => "cuda" }
+    );
 
     let mut total = 0i64;
     let batch = args.batch.max(1);
+
+    // Plan-only default: compute counts via SQL; do not build encoder or write
+    if !args.apply {
+        let total_candidates = count_candidates(pool, &model_tag, args.force).await?;
+        let planned = match args.max { Some(m) => total_candidates.min(m), None => total_candidates };
+        println!(
+            "📝 Embed plan — model={} dim={} batch={} force={} candidates={} planned={}",
+            model_tag, args.dim, batch, args.force, total_candidates, planned
+        );
+        let ids = list_candidate_chunk_ids(pool, &model_tag, args.force, args.plan_limit as i64).await?;
+        for id in ids { println!("  chunk_id={}", id); }
+        if (args.plan_limit as i64) < planned { println!("  ... (more up to planned count)"); }
+        println!("   Use --apply to run embedding.");
+        return Ok(());
+    }
+
+    // APPLY: Build encoder (tokenizer + ONNX session)
+    let mut encoder = E5Encoder::new(&args.model_id, args.onnx_filename.as_deref(), args.device)?;
 
     // In --force mode, fetch all once (optionally limited by --max) and process in batches, then exit.
     if args.force {
@@ -191,4 +212,63 @@ async fn fetch_all_chunks(pool: &PgPool, limit: Option<i64>) -> Result<Vec<(i64,
     .fetch_all(pool)
     .await?;
     Ok(rows.into_iter().map(|r| (r.chunk_id, r.text)).collect())
+}
+
+async fn count_candidates(pool: &PgPool, model_tag: &str, force: bool) -> Result<i64> {
+    let n = if force {
+        sqlx::query_scalar!(
+            r#"SELECT COUNT(*)::bigint FROM rag.chunk"#
+        )
+        .fetch_one(pool)
+        .await?
+    } else {
+        sqlx::query_scalar!(
+            r#"
+            SELECT COUNT(*)::bigint
+            FROM rag.chunk c
+            LEFT JOIN rag.embedding e
+              ON e.chunk_id = c.chunk_id AND e.model = $1
+            WHERE e.chunk_id IS NULL
+            "#,
+            model_tag
+        )
+        .fetch_one(pool)
+        .await?
+    };
+    Ok(n.unwrap_or(0))
+}
+
+async fn list_candidate_chunk_ids(pool: &PgPool, model_tag: &str, force: bool, limit: i64) -> Result<Vec<i64>> {
+    if limit <= 0 { return Ok(vec![]); }
+    if force {
+        let rows = sqlx::query!(
+            r#"
+            SELECT c.chunk_id
+            FROM rag.chunk c
+            ORDER BY c.chunk_id
+            LIMIT $1
+            "#,
+            limit
+        )
+        .fetch_all(pool)
+        .await?;
+        return Ok(rows.into_iter().map(|r| r.chunk_id).collect());
+    }
+
+    let rows = sqlx::query!(
+        r#"
+        SELECT c.chunk_id
+        FROM rag.chunk c
+        LEFT JOIN rag.embedding e
+          ON e.chunk_id = c.chunk_id AND e.model = $1
+        WHERE e.chunk_id IS NULL
+        ORDER BY c.chunk_id
+        LIMIT $2
+        "#,
+        model_tag,
+        limit
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(|r| r.chunk_id).collect())
 }

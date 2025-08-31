@@ -13,13 +13,11 @@ pub struct ChunkCmd {
     #[arg(long, default_value_t = 80)]  overlap: usize,
     #[arg(long, default_value_t = 24)]  max_chunks_per_doc: usize,
     #[arg(long, default_value_t = false)] force: bool,
+    #[arg(long, default_value_t = false)] apply: bool, // default is plan-only
+    #[arg(long, default_value_t = 10)] plan_limit: usize, // how many doc IDs to list in plan
 }
 
 pub async fn run(pool: &PgPool, args: ChunkCmd) -> Result<()> {
-    // build tokenizer (env overrides, sensible defaults)
-    let tok: E5Tokenizer = E5Tokenizer::new()
-        .context("init E5 tokenizer")?;
-
     // select candidate docs
     let docs = select_docs(pool, &args).await?;
     if docs.is_empty() {
@@ -28,6 +26,24 @@ pub async fn run(pool: &PgPool, args: ChunkCmd) -> Result<()> {
             if args.since.is_some() { ", --since" } else { "" });
         return Ok(());
     }
+
+    // Plan-only by default: show plan and exit (no tokenization, no writes)
+    if !args.apply {
+        println!(
+            "📝 Chunk plan — docs={} force={} tokens_target={} overlap={} max_chunks_per_doc={}",
+            docs.len(), args.force, args.tokens_target, args.overlap, args.max_chunks_per_doc
+        );
+        for (doc_id, _text_clean) in docs.iter().take(args.plan_limit) {
+            println!("  doc_id={}", doc_id);
+        }
+        if docs.len() > args.plan_limit { println!("  ... ({} more)", docs.len() - args.plan_limit); }
+        println!("   Use --apply to execute chunking.");
+        return Ok(());
+    }
+
+    // APPLY: build tokenizer (env overrides, sensible defaults)
+    let tok: E5Tokenizer = E5Tokenizer::new()
+        .context("init E5 tokenizer")?;
 
     // process each doc
     for (doc_id, text_clean) in docs {

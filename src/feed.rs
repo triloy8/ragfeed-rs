@@ -11,13 +11,15 @@ pub struct FeedCmd {
 
 #[derive(Subcommand)]
 pub enum FeedSub {
-    // add a new feed
+    // add a new feed (plan-only by default; use --apply to write)
     Add {
         url: String,
         #[arg(long)]
         name: Option<String>,
         #[arg(long, default_value_t = true)]
         active: bool,
+        #[arg(long, default_value_t = false)]
+        apply: bool,
     },
     // list feeds
     Ls {
@@ -28,13 +30,23 @@ pub enum FeedSub {
 
 pub async fn run(pool: &PgPool, args: FeedCmd) -> Result<()> {
     match args.cmd {
-        FeedSub::Add { url, name, active } => add_feed(pool, url, name, active).await?,
+        FeedSub::Add { url, name, active, apply } => add_feed(pool, url, name, active, apply).await?,
         FeedSub::Ls { active_only } => ls_feeds(pool, active_only).await?,
     }
     Ok(())
 }
 
-async fn add_feed(pool: &PgPool, url: String, name: Option<String>, active: bool) -> Result<()> {
+async fn add_feed(pool: &PgPool, url: String, name: Option<String>, active: bool, apply: bool) -> Result<()> {
+    if !apply {
+        println!(
+            "📝 Plan: UPSERT rag.feed (url, name, is_active) VALUES ({}, {:?}, {})",
+            url,
+            name,
+            active
+        );
+        println!("   Use --apply to execute.");
+        return Ok(());
+    }
     sqlx::query!(
         r#"
         INSERT INTO rag.feed (url, name, is_active)
