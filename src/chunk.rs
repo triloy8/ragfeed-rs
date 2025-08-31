@@ -67,7 +67,7 @@ pub async fn run(pool: &PgPool, args: ChunkCmd) -> Result<()> {
         sqlx::query!("DELETE FROM rag.chunk WHERE doc_id = $1", doc_id)
             .execute(pool).await?;
 
-        // insert chunks (no md5 for now, optional in schema)
+        // insert chunks (record md5 fingerprint)
         let mut inserted = 0usize;
         for (i, id_slice) in slices.into_iter().enumerate() {
             let chunk_text = tok.decode_ids(id_slice)
@@ -78,10 +78,12 @@ pub async fn run(pool: &PgPool, args: ChunkCmd) -> Result<()> {
 
             sqlx::query!(
                 r#"
-                INSERT INTO rag.chunk (doc_id, chunk_index, text, token_count)
-                VALUES ($1, $2, $3, $4)
+                INSERT INTO rag.chunk (doc_id, chunk_index, text, token_count, md5)
+                VALUES ($1, $2, $3, $4, md5($3))
                 ON CONFLICT (doc_id, chunk_index) DO UPDATE
-                  SET text = EXCLUDED.text, token_count = EXCLUDED.token_count
+                  SET text = EXCLUDED.text,
+                      token_count = EXCLUDED.token_count,
+                      md5 = EXCLUDED.md5
                 "#,
                 doc_id,
                 i as i32,
