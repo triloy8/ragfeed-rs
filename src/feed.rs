@@ -38,12 +38,7 @@ pub async fn run(pool: &PgPool, args: FeedCmd) -> Result<()> {
 
 async fn add_feed(pool: &PgPool, url: String, name: Option<String>, active: bool, apply: bool) -> Result<()> {
     if !apply {
-        println!(
-            "📝 Plan: UPSERT rag.feed (url, name, is_active) VALUES ({}, {:?}, {})",
-            url,
-            name,
-            active
-        );
+        println!("📝 Feed plan — add url={} name={:?} active={}", url, name, active);
         println!("   Use --apply to execute.");
         return Ok(());
     }
@@ -64,6 +59,7 @@ async fn add_feed(pool: &PgPool, url: String, name: Option<String>, active: bool
 }
 
 async fn ls_feeds(pool: &PgPool, active_only: bool) -> Result<()> {
+    println!("📡 Feeds:");
     let rows = sqlx::query!(
         r#"
         SELECT feed_id, url, name, is_active, added_at

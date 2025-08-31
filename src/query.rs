@@ -104,6 +104,7 @@ pub async fn run(pool: &PgPool, args: QueryCmd) -> Result<()> {
     if args.json {
         println!("{}", serde_json::to_string_pretty(&out)?);
     } else {
+        println!("🔍 Results:");
         for r in &out {
             println!("#{}  dist={:.4}  chunk={} doc={}  {:?}", r.rank, r.distance, r.chunk_id, r.doc_id, r.title);
             if args.show_context {
