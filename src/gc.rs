@@ -12,8 +12,7 @@ pub enum VacuumMode {
 
 #[derive(Args, Debug)]
 pub struct GcCmd {
-    #[arg(long, default_value_t = true)] dry_run: bool, // dry-run mode (prints what would be deleted). Use --apply to execute
-    #[arg(long, default_value_t = false)] apply: bool, // execute changes (overrides --dry-run)
+    #[arg(long, default_value_t = false)] apply: bool, // default is plan-only; use --apply to execute
     #[arg(long, default_value = "30d")] older_than: String, // consider items older than this window as stale (e.g., "30d" or "2025-01-01")
     #[arg(long, default_value_t = 10_000)] max: i64, // max rows to delete per batch
     #[arg(long)] feed: Option<i32>, // scope operations to a single feed ID
@@ -24,11 +23,11 @@ pub struct GcCmd {
 
 pub async fn run(pool: &PgPool, args: GcCmd) -> Result<()> {
     let cutoff = parse_cutoff(&args.older_than);
-    let execute = args.apply && !args.dry_run;
-    let mode = if execute { "apply" } else { "dry-run" };
+    let execute = args.apply;
+    let mode = if execute { "apply" } else { "plan" };
 
     println!(
-        "🧹 GC plan — mode={} feed={:?} cutoff={:?} max={} vacuum={:?} fix_status={} drop_temp_indexes={}",
+        "📝 GC plan — mode={} feed={:?} cutoff={:?} max={} vacuum={:?} fix_status={} drop_temp_indexes={}",
         mode,
         args.feed,
         cutoff,
@@ -37,6 +36,7 @@ pub async fn run(pool: &PgPool, args: GcCmd) -> Result<()> {
         args.fix_status,
         args.drop_temp_indexes
     );
+    if !execute { println!("   Use --apply to execute."); }
 
     // orphan chunks
     let orphan_chunks = count_orphan_chunks(pool, args.feed).await?;
