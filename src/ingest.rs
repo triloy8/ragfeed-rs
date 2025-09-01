@@ -4,6 +4,10 @@ use rss::Channel;
 use reqwest::Client;
 use chrono::Utc;
 use url::Url;
+use serde::Serialize;
+use tracing::{info, debug, warn, error, info_span};
+
+use crate::out;
 
 use crate::extractor;
 
@@ -15,10 +19,23 @@ pub struct IngestCmd {
     #[arg(long)] force_refetch: bool,
     #[arg(long, default_value_t=false)] apply: bool, // default is plan-only (no network, no writes)
     #[arg(long, default_value_t=10)] plan_limit: usize, // how many feeds to list in plan
-    #[arg(long, default_value_t=false)] verbose: bool, // print per-item actions in --apply mode
 }
 
 pub async fn run(pool: &PgPool, args: IngestCmd) -> Result<()> {
+    let span = if out::logs_are_json() {
+        info_span!(
+            "ingest",
+            apply = args.apply,
+            limit = args.limit as i64,
+            plan_limit = args.plan_limit as i64,
+            force_refetch = args.force_refetch,
+            feed = ?args.feed,
+            feed_url = ?args.feed_url
+        )
+    } else {
+        info_span!("ingest")
+    };
+    let _g = span.enter();
     // resolve feeds — single parameterized query (no branching)
     let feeds = sqlx::query!(
         r#"
@@ -40,15 +57,28 @@ pub async fn run(pool: &PgPool, args: IngestCmd) -> Result<()> {
     // plan-only default: do not perform network calls or DB writes
     if !args.apply {
         let mode = if args.force_refetch { "upsert" } else { "insert-only" };
-        println!(
-            "📝 Ingest plan — feeds={} mode={} limit={}",
-            feeds.len(), mode, args.limit
-        );
-        for f in feeds.iter().take(args.plan_limit) {
-            println!("  feed_id={} url={} name={}", f.feed_id, f.url, f.name.clone().unwrap_or_default());
+        if out::json_mode() {
+            #[derive(Serialize)]
+            struct FeedSample { feed_id: i32, url: String, name: Option<String> }
+            #[derive(Serialize)]
+            struct IngestPlan { feeds: usize, mode: String, limit: usize, sample_feeds: Vec<FeedSample> }
+            let samples: Vec<FeedSample> = feeds
+                .iter()
+                .take(args.plan_limit)
+                .map(|f| FeedSample { feed_id: f.feed_id, url: f.url.clone(), name: f.name.clone() })
+                .collect();
+            let plan = IngestPlan { feeds: feeds.len(), mode: mode.to_string(), limit: args.limit, sample_feeds: samples };
+            out::print_plan("ingest", &plan, None)?;
+        } else {
+            info!("📝 Ingest plan — feeds={} mode={} limit={}", feeds.len(), mode, args.limit);
+            for f in feeds.iter().take(args.plan_limit) {
+                info!("  feed_id={} url={} name={:?}", f.feed_id, f.url, f.name);
+            }
+            if feeds.len() > args.plan_limit {
+                info!("  ... ({} more)", feeds.len() - args.plan_limit);
+            }
+            info!("   Use --apply to fetch and write.");
         }
-        if feeds.len() > args.plan_limit { println!("  ... ({} more)", feeds.len() - args.plan_limit); }
-        println!("   Use --apply to fetch and write.");
         return Ok(());
     }
 
@@ -61,23 +91,40 @@ pub async fn run(pool: &PgPool, args: IngestCmd) -> Result<()> {
     let mut total_skipped = 0usize;
     let mut total_errors  = 0usize;
 
+    #[derive(Serialize)]
+    struct FeedSummary { feed_id: i32, inserted: usize, updated: usize, skipped: usize, errors: usize }
+    let mut per_feed: Vec<FeedSummary> = Vec::new();
+
     for f in feeds {
+        let _feed_span = if out::logs_are_json() {
+            info_span!("feed", feed_id = f.feed_id, url = %f.url).entered()
+        } else {
+            info_span!("feed").entered()
+        };
         let mut inserted = 0usize;
         let mut updated  = 0usize;
         let mut skipped  = 0usize;
         let mut errors   = 0usize;
 
+        let _rss_span = info_span!("fetch_rss").entered();
         let xml = client.get(&f.url).send().await?.bytes().await?;
+        drop(_rss_span);
+        let _parse_span = info_span!("parse_rss").entered();
         let channel = Channel::read_from(&xml[..])?;
+        drop(_parse_span);
 
         for item in channel.items().iter().take(args.limit) {
             if let Some(link) = item.link() {
                 // fetch article
+                let _fetch_span = if out::logs_are_json() { info_span!("fetch_item", url = %link).entered() } else { info_span!("fetch_item").entered() };
                 let html = client.get(link).send().await?.text().await?;
+                drop(_fetch_span);
 
                 // per-host extraction with fallback
                 let host = Url::parse(link).ok().and_then(|u| u.host_str().map(|s| s.to_string())).unwrap_or_default();
+                let _extract_span = if out::logs_are_json() { info_span!("extract", host = %host).entered() } else { info_span!("extract").entered() };
                 let extracted = extractor::extract(&host, &html);
+                drop(_extract_span);
                 let (text, status, error_msg) = match extracted {
                     Some(t) if !t.trim().is_empty() => (t, "ingest", None),
                     _ => (String::new(), "error", Some(String::from("extraction-empty"))),
@@ -91,6 +138,7 @@ pub async fn run(pool: &PgPool, args: IngestCmd) -> Result<()> {
                 // insert or upsert into rag.document
                 if args.force_refetch {
                     // Refresh existing rows on conflict
+                    let _write_span = if out::logs_are_json() { info_span!("write_doc", mode = "upsert").entered() } else { info_span!("write_doc").entered() };
                     let res = sqlx::query!(
                         r#"
                         INSERT INTO rag.document (feed_id, source_url, source_title,
@@ -121,13 +169,23 @@ pub async fn run(pool: &PgPool, args: IngestCmd) -> Result<()> {
                     .await?;
                     if res.inserted.unwrap_or(false) {
                         inserted += 1;
-                        if args.verbose { println!("➕ inserted: {} ({})", item.title().unwrap_or(""), link); }
+                        if out::logs_are_json() {
+                            debug!(op = "ingest", action = "insert", url = %link, title = item.title().unwrap_or(""), "➕ insert");
+                        } else {
+                            debug!(action = "insert", url = %link, title = item.title().unwrap_or(""), "➕ insert");
+                        }
                     } else {
                         updated += 1;
-                        if args.verbose { println!("♻️  updated: {} ({})", item.title().unwrap_or(""), link); }
+                        if out::logs_are_json() {
+                            debug!(op = "ingest", action = "update", url = %link, title = item.title().unwrap_or(""), "♻️ update");
+                        } else {
+                            debug!(action = "update", url = %link, title = item.title().unwrap_or(""), "♻️ update");
+                        }
                     }
+                    drop(_write_span);
                 } else {
                     // Insert only new rows; ignore duplicates
+                    let _write_span = if out::logs_are_json() { info_span!("write_doc", mode = "insert").entered() } else { info_span!("write_doc").entered() };
                     let exec = sqlx::query!(
                         r#"
                         INSERT INTO rag.document (feed_id, source_url, source_title,
@@ -149,16 +207,29 @@ pub async fn run(pool: &PgPool, args: IngestCmd) -> Result<()> {
                     .await?;
                     if exec.rows_affected() == 1 {
                         inserted += 1;
-                        if args.verbose { println!("➕ inserted: {} ({})", item.title().unwrap_or(""), link); }
+                        if out::logs_are_json() {
+                            debug!(op = "ingest", action = "insert", url = %link, title = item.title().unwrap_or(""), "➕ insert");
+                        } else {
+                            debug!(action = "insert", url = %link, title = item.title().unwrap_or(""), "➕ insert");
+                        }
                     } else {
                         skipped += 1;
-                        if args.verbose { println!("↩️  skipped existing: {}", item.title().unwrap_or("")); }
+                        if out::logs_are_json() {
+                            debug!(op = "ingest", action = "skip", title = item.title().unwrap_or(""), "↩️ skip");
+                        } else {
+                            debug!(action = "skip", title = item.title().unwrap_or(""), "↩️ skip");
+                        }
                     }
+                    drop(_write_span);
                 }
             } else {
                 // item without link — skip
                 skipped += 1;
-                if args.verbose { println!("↩️  skipped item with no link"); }
+                if out::logs_are_json() {
+                    debug!(op = "ingest", action = "skip", reason = "no-link", "↩️ skip");
+                } else {
+                    debug!(action = "skip", reason = "no-link", "↩️ skip");
+                }
             }
         }
 
@@ -166,15 +237,54 @@ pub async fn run(pool: &PgPool, args: IngestCmd) -> Result<()> {
         total_updated  += updated;
         total_skipped  += skipped;
         total_errors   += errors;
-        println!(
-            "✅ Feed {} — inserted={} updated={} skipped={} errors={}",
-            f.feed_id,
-            inserted, updated, skipped, errors
+        if out::logs_are_json() {
+            info!(
+                op = "ingest",
+                feed_id = f.feed_id,
+                inserted,
+                updated,
+                skipped,
+                errors,
+                "✅ Feed {} — inserted={} updated={} skipped={} errors={}",
+                f.feed_id, inserted, updated, skipped, errors
+            );
+        } else {
+            info!(
+                "✅ Feed {} — inserted={} updated={} skipped={} errors={}",
+                f.feed_id, inserted, updated, skipped, errors
+            );
+        }
+        per_feed.push(FeedSummary { feed_id: f.feed_id, inserted, updated, skipped, errors });
+    }
+    // Always log human-readable totals at info level
+    if out::logs_are_json() {
+        info!(
+            op = "ingest",
+            inserted = total_inserted,
+            updated = total_updated,
+            skipped = total_skipped,
+            errors = total_errors,
+            "📊 Ingest totals — inserted={} updated={} skipped={} errors={}",
+            total_inserted, total_updated, total_skipped, total_errors
+        );
+    } else {
+        info!(
+            "📊 Ingest totals — inserted={} updated={} skipped={} errors={}",
+            total_inserted, total_updated, total_skipped, total_errors
         );
     }
-    println!(
-        "📊 Ingest totals — inserted={} updated={} skipped={} errors={}",
-        total_inserted, total_updated, total_skipped, total_errors
-    );
+
+    // Optionally emit the machine-readable result envelope to stdout
+    if out::json_mode() {
+        #[derive(Serialize)]
+        struct IngestTotals { inserted: usize, updated: usize, skipped: usize, errors: usize }
+        #[derive(Serialize)]
+        struct IngestApply { totals: IngestTotals, per_feed: Vec<FeedSummary> }
+        let result = IngestApply {
+            totals: IngestTotals { inserted: total_inserted, updated: total_updated, skipped: total_skipped, errors: total_errors },
+            per_feed,
+        };
+        out::print_result("ingest", &result, None)?;
+    }
     Ok(())
 }

@@ -3,6 +3,9 @@ use sqlx::{PgPool};
 use anyhow::Result;
 use dotenvy::dotenv;
 use std::env;
+use std::time::Instant;
+
+mod out;
 
 mod init;
 mod feed;
@@ -22,6 +25,9 @@ mod query;
 struct Cli {
     #[arg(global = true, short, long)]
     dsn: Option<String>,
+    /// Emit a single JSON envelope to stdout; logs go to stderr
+    #[arg(global = true, long, default_value_t = false)]
+    json: bool,
 
     #[command(subcommand)]
     command: Commands,
@@ -44,6 +50,11 @@ enum Commands {
 async fn main() -> Result<()> {
     dotenv().ok();
     let cli = Cli::parse();
+    out::set_json_mode(cli.json);
+    let _t0 = Instant::now();
+
+    // initialize logging/tracing (stderr). Respect RUST_LOG and RAG_LOG_FORMAT
+    init_tracing();
     let dsn = cli
         .dsn
         .or_else(|| env::var("DATABASE_URL").ok())
@@ -65,4 +76,26 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn init_tracing() {
+    use tracing_subscriber::{fmt, EnvFilter};
+    use tracing_subscriber::prelude::*; // for .with()
+
+    // Default filter if RUST_LOG unset
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info"));
+
+    let fmt_layer = fmt::layer().with_target(false);
+    let builder = tracing_subscriber::registry().with(filter);
+
+    match env::var("RAG_LOG_FORMAT").as_deref() {
+        Ok("json") => {
+            let _ = builder.with(fmt_layer.json().flatten_event(true)).try_init();
+        }
+        _ => {
+            // human-friendly compact text
+            let _ = builder.with(fmt_layer.compact()).try_init();
+        }
+    }
 }
