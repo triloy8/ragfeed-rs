@@ -5,7 +5,6 @@ use reqwest::Client;
 use chrono::Utc;
 use url::Url;
 use serde::Serialize;
-use tracing::{info_span};
 
 use crate::out::{self};
 use crate::out::ingest::{Phase as IngestPhase};

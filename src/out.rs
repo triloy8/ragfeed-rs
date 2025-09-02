@@ -45,6 +45,33 @@ pub mod ingest {
     // name() and span() implemented via crate-level traits below
 }
 
+// Type-state LogCtx: init command
+pub mod init {
+    #[derive(Copy, Clone, Debug)]
+    pub struct Init;
+
+    #[derive(Copy, Clone, Debug)]
+    pub enum Phase {
+        Plan,
+        Migrate,
+    }
+    // name() and span() via traits below
+}
+
+// Type-state LogCtx: feed command
+pub mod feed {
+    #[derive(Copy, Clone, Debug)]
+    pub struct Feed;
+
+    #[derive(Copy, Clone, Debug)]
+    pub enum Phase {
+        Plan,
+        Add,
+        List,
+    }
+    // name() and span() via traits below
+}
+
 // Traits to avoid duplication while keeping literal span names
 pub trait PhaseSpan {
     fn name(&self) -> &'static str;
@@ -63,6 +90,8 @@ pub struct LogCtx<O: OpMarker> {
 }
 
 pub fn ingest() -> LogCtx<ingest::Ingest> { LogCtx { json: logs_are_json(), _marker: PhantomData } }
+pub fn init() -> LogCtx<init::Init> { LogCtx { json: logs_are_json(), _marker: PhantomData } }
+pub fn feed() -> LogCtx<feed::Feed> { LogCtx { json: logs_are_json(), _marker: PhantomData } }
 
 impl<O: OpMarker> LogCtx<O> {
     fn op_name(&self) -> &'static str { O::NAME }
@@ -164,6 +193,52 @@ impl OpMarker for ingest::Ingest {
     const NAME: &'static str = "ingest";
     type Phase = ingest::Phase;
     fn root_span() -> Span { info_span!("ingest") }
+}
+
+// Init implementations for traits
+impl PhaseSpan for init::Phase {
+    fn name(&self) -> &'static str {
+        match self {
+            init::Phase::Plan => "plan",
+            init::Phase::Migrate => "migrate",
+        }
+    }
+    fn span(&self) -> Span {
+        match self {
+            init::Phase::Plan => info_span!("plan"),
+            init::Phase::Migrate => info_span!("migrate"),
+        }
+    }
+}
+
+impl OpMarker for init::Init {
+    const NAME: &'static str = "init";
+    type Phase = init::Phase;
+    fn root_span() -> Span { info_span!("init") }
+}
+
+// Feed implementations for traits
+impl PhaseSpan for feed::Phase {
+    fn name(&self) -> &'static str {
+        match self {
+            feed::Phase::Plan => "plan",
+            feed::Phase::Add => "add",
+            feed::Phase::List => "list",
+        }
+    }
+    fn span(&self) -> Span {
+        match self {
+            feed::Phase::Plan => info_span!("plan"),
+            feed::Phase::Add => info_span!("add"),
+            feed::Phase::List => info_span!("list"),
+        }
+    }
+}
+
+impl OpMarker for feed::Feed {
+    const NAME: &'static str = "feed";
+    type Phase = feed::Phase;
+    fn root_span() -> Span { info_span!("feed") }
 }
 
 // Ingest-specific helpers remain available on the typed context
