@@ -135,6 +135,20 @@ pub mod gc {
     }
 }
 
+// Type-state LogCtx: stats command
+pub mod stats {
+    #[derive(Copy, Clone, Debug)]
+    pub struct Stats;
+
+    #[derive(Copy, Clone, Debug)]
+    pub enum Phase {
+        Summary,
+        FeedStats,
+        DocSnapshot,
+        ChunkSnapshot,
+    }
+}
+
 // Traits to avoid duplication while keeping literal span names
 pub trait PhaseSpan {
     fn name(&self) -> &'static str;
@@ -159,6 +173,7 @@ pub fn chunk() -> LogCtx<chunk::Chunk> { LogCtx { json: logs_are_json(), _marker
 pub fn embed() -> LogCtx<embed::Embed> { LogCtx { json: logs_are_json(), _marker: PhantomData } }
 pub fn reindex() -> LogCtx<reindex::Reindex> { LogCtx { json: logs_are_json(), _marker: PhantomData } }
 pub fn gc() -> LogCtx<gc::Gc> { LogCtx { json: logs_are_json(), _marker: PhantomData } }
+pub fn stats() -> LogCtx<stats::Stats> { LogCtx { json: logs_are_json(), _marker: PhantomData } }
 
 impl<O: OpMarker> LogCtx<O> {
     fn op_name(&self) -> &'static str { O::NAME }
@@ -424,6 +439,32 @@ impl OpMarker for gc::Gc {
     const NAME: &'static str = "gc";
     type Phase = gc::Phase;
     fn root_span() -> Span { info_span!("gc") }
+}
+
+// Stats implementations for traits
+impl PhaseSpan for stats::Phase {
+    fn name(&self) -> &'static str {
+        match self {
+            stats::Phase::Summary => "summary",
+            stats::Phase::FeedStats => "feed_stats",
+            stats::Phase::DocSnapshot => "doc_snapshot",
+            stats::Phase::ChunkSnapshot => "chunk_snapshot",
+        }
+    }
+    fn span(&self) -> Span {
+        match self {
+            stats::Phase::Summary => info_span!("summary"),
+            stats::Phase::FeedStats => info_span!("feed_stats"),
+            stats::Phase::DocSnapshot => info_span!("doc_snapshot"),
+            stats::Phase::ChunkSnapshot => info_span!("chunk_snapshot"),
+        }
+    }
+}
+
+impl OpMarker for stats::Stats {
+    const NAME: &'static str = "stats";
+    type Phase = stats::Phase;
+    fn root_span() -> Span { info_span!("stats") }
 }
 
 // Ingest-specific helpers remain available on the typed context
