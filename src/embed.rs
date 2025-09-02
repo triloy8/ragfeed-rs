@@ -1,5 +1,6 @@
 use anyhow::{bail, Context, Result};
 use clap::Args;
+use serde::Serialize;
 use sqlx::PgPool;
 
 use crate::encoder::{Device, E5Encoder};
@@ -23,6 +24,20 @@ pub struct EmbedCmd {
 }
 
 pub async fn run(pool: &PgPool, args: EmbedCmd) -> Result<()> {
+    use crate::out::{self};
+    use crate::out::embed::Phase as EmbedPhase;
+    let log = out::embed();
+    let _g = log.root_span_kv([
+        ("model_id", args.model_id.clone()),
+        ("onnx_filename", format!("{:?}", args.onnx_filename)),
+        ("device", format!("{:?}", args.device)),
+        ("dim", args.dim.to_string()),
+        ("batch", args.batch.to_string()),
+        ("max", format!("{:?}", args.max)),
+        ("force", args.force.to_string()),
+        ("apply", args.apply.to_string()),
+        ("plan_limit", args.plan_limit.to_string()),
+    ]).entered();
     // effective model tag (stored in DB); plan-only should not build model
     let model_tag = format!(
         "{}@onnx-{}",
@@ -35,27 +50,48 @@ pub async fn run(pool: &PgPool, args: EmbedCmd) -> Result<()> {
 
     // Plan-only default: compute counts via SQL; do not build encoder or write
     if !args.apply {
-        let total_candidates = count_candidates(pool, &model_tag, args.force).await?;
+        let _sp = log.span(&EmbedPhase::Plan).entered();
+        let total_candidates = {
+            let _s = log.span(&EmbedPhase::CountCandidates).entered();
+            count_candidates(pool, &model_tag, args.force).await?
+        };
         let planned = match args.max { Some(m) => total_candidates.min(m), None => total_candidates };
-        println!(
-            "📝 Embed plan — model={} dim={} batch={} force={} candidates={} planned={}",
-            model_tag, args.dim, batch, args.force, total_candidates, planned
-        );
         let ids = list_candidate_chunk_ids(pool, &model_tag, args.force, args.plan_limit as i64).await?;
-        for id in ids { println!("  chunk_id={}", id); }
-        if (args.plan_limit as i64) < planned { println!("  ... (more up to planned count)"); }
-        println!("   Use --apply to run embedding.");
+        if out::json_mode() {
+            #[derive(Serialize)]
+            struct EmbedPlan { model: String, dim: usize, batch: usize, force: bool, candidates: i64, planned: i64, sample_chunk_ids: Vec<i64> }
+            let plan = EmbedPlan { model: model_tag.clone(), dim: args.dim, batch, force: args.force, candidates: total_candidates, planned, sample_chunk_ids: ids };
+            log.plan(&plan)?;
+        } else {
+            log.info(format!(
+                "📝 Embed plan — model={} dim={} batch={} force={} candidates={} planned={}",
+                model_tag, args.dim, batch, args.force, total_candidates, planned
+            ));
+            for id in &ids { log.info(format!("  chunk_id={}", id)); }
+            if (args.plan_limit as i64) < planned { log.info("  ... (more up to planned count)"); }
+            log.info("   Use --apply to run embedding.");
+        }
         return Ok(());
     }
 
     // APPLY: Build encoder (tokenizer + ONNX session)
+    let _lm = log.span(&EmbedPhase::LoadModel).entered();
     let mut encoder = E5Encoder::new(&args.model_id, args.onnx_filename.as_deref(), args.device)?;
+    drop(_lm);
 
     // In --force mode, fetch all once (optionally limited by --max) and process in batches, then exit.
     if args.force {
-        let rows = fetch_all_chunks(pool, args.max).await?;
+        let rows = {
+            let _fb = log.span(&EmbedPhase::FetchBatch).entered();
+            fetch_all_chunks(pool, args.max).await?
+        };
         if rows.is_empty() {
-            println!("ℹ️  No chunks to embed (force={} model={})", args.force, model_tag);
+            log.info(format!("ℹ️  No chunks to embed (force={} model={})", args.force, model_tag));
+            if out::json_mode() {
+                #[derive(Serialize)]
+                struct EmbedResult { total_embedded: i64 }
+                log.result(&EmbedResult { total_embedded: 0 })?;
+            }
             return Ok(());
         }
 
@@ -63,7 +99,9 @@ pub async fn run(pool: &PgPool, args: EmbedCmd) -> Result<()> {
             let chunk_ids: Vec<i64> = chunk.iter().map(|(id, _)| *id).collect();
             let texts: Vec<String> = chunk.iter().map(|(_, t)| t.clone()).collect();
 
+            let _enc = log.span(&EmbedPhase::Encode).entered();
             let embeddings = encoder.embed_passages(&texts)?; // Vec<Vec<f32>>
+            drop(_enc);
 
             // all vectors should have same dim
             let dim = embeddings.get(0).map(|v| v.len()).unwrap_or(0);
@@ -74,6 +112,7 @@ pub async fn run(pool: &PgPool, args: EmbedCmd) -> Result<()> {
 
             // insert embeddings
             for (chunk_id, vec) in chunk_ids.into_iter().zip(embeddings.into_iter()) {
+                let _ins = log.span(&EmbedPhase::InsertEmbedding).entered();
                 sqlx::query(
                     r#"
                     INSERT INTO rag.embedding (chunk_id, model, dim, vec)
@@ -90,12 +129,18 @@ pub async fn run(pool: &PgPool, args: EmbedCmd) -> Result<()> {
                 .bind(PgVector::from(vec))
                 .execute(pool)
                 .await?;
+                drop(_ins);
             }
 
             total += texts.len() as i64;
-            println!("✅ embedded {} chunk(s) (total={})", texts.len(), total);
+            log.info(format!("✅ embedded {} chunk(s) (total={})", texts.len(), total));
         }
 
+        if out::json_mode() {
+            #[derive(Serialize)]
+            struct EmbedResult { total_embedded: i64 }
+            log.result(&EmbedResult { total_embedded: total })?;
+        }
         return Ok(());
     }
 
@@ -105,13 +150,18 @@ pub async fn run(pool: &PgPool, args: EmbedCmd) -> Result<()> {
         let n = remaining.min(batch as i64) as i64;
         if n <= 0 { break; }
 
-        let rows = fetch_chunks(pool, &model_tag, false, n).await?;
+        let rows = {
+            let _fb = log.span(&EmbedPhase::FetchBatch).entered();
+            fetch_chunks(pool, &model_tag, false, n).await?
+        };
         if rows.is_empty() { break; }
 
         let chunk_ids: Vec<i64> = rows.iter().map(|(id, _)| *id).collect();
         let texts: Vec<String> = rows.into_iter().map(|(_, t)| t).collect();
 
+        let _enc = log.span(&EmbedPhase::Encode).entered();
         let embeddings = encoder.embed_passages(&texts)?; // Vec<Vec<f32>>
+        drop(_enc);
 
         // all vectors should have same dim
         let dim = embeddings.get(0).map(|v| v.len()).unwrap_or(0);
@@ -122,6 +172,7 @@ pub async fn run(pool: &PgPool, args: EmbedCmd) -> Result<()> {
 
         // insert embeddings
         for (chunk_id, vec) in chunk_ids.into_iter().zip(embeddings.into_iter()) {
+            let _ins = log.span(&EmbedPhase::InsertEmbedding).entered();
             sqlx::query(
                 r#"
                 INSERT INTO rag.embedding (chunk_id, model, dim, vec)
@@ -138,15 +189,22 @@ pub async fn run(pool: &PgPool, args: EmbedCmd) -> Result<()> {
             .bind(PgVector::from(vec))
             .execute(pool)
             .await?;
+            drop(_ins);
         }
 
         total += texts.len() as i64;
         remaining -= n;
-        println!("✅ embedded {} chunk(s) (total={})", texts.len(), total);
+        log.info(format!("✅ embedded {} chunk(s) (total={})", texts.len(), total));
     }
 
     if total == 0 {
-        println!("ℹ️  No chunks to embed (force={} model={})", args.force, model_tag);
+        log.info(format!("ℹ️  No chunks to embed (force={} model={})", args.force, model_tag));
+    }
+
+    if out::json_mode() {
+        #[derive(Serialize)]
+        struct EmbedResult { total_embedded: i64 }
+        log.result(&EmbedResult { total_embedded: total })?;
     }
 
     Ok(())

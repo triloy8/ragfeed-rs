@@ -72,6 +72,37 @@ pub mod feed {
     // name() and span() via traits below
 }
 
+// Type-state LogCtx: chunk command
+pub mod chunk {
+    #[derive(Copy, Clone, Debug)]
+    pub struct Chunk;
+
+    #[derive(Copy, Clone, Debug)]
+    pub enum Phase {
+        Plan,
+        SelectDocs,
+        Tokenize,
+        InsertChunk,
+        UpdateStatus,
+    }
+}
+
+// Type-state LogCtx: embed command
+pub mod embed {
+    #[derive(Copy, Clone, Debug)]
+    pub struct Embed;
+
+    #[derive(Copy, Clone, Debug)]
+    pub enum Phase {
+        Plan,
+        CountCandidates,
+        LoadModel,
+        FetchBatch,
+        Encode,
+        InsertEmbedding,
+    }
+}
+
 // Traits to avoid duplication while keeping literal span names
 pub trait PhaseSpan {
     fn name(&self) -> &'static str;
@@ -92,6 +123,8 @@ pub struct LogCtx<O: OpMarker> {
 pub fn ingest() -> LogCtx<ingest::Ingest> { LogCtx { json: logs_are_json(), _marker: PhantomData } }
 pub fn init() -> LogCtx<init::Init> { LogCtx { json: logs_are_json(), _marker: PhantomData } }
 pub fn feed() -> LogCtx<feed::Feed> { LogCtx { json: logs_are_json(), _marker: PhantomData } }
+pub fn chunk() -> LogCtx<chunk::Chunk> { LogCtx { json: logs_are_json(), _marker: PhantomData } }
+pub fn embed() -> LogCtx<embed::Embed> { LogCtx { json: logs_are_json(), _marker: PhantomData } }
 
 impl<O: OpMarker> LogCtx<O> {
     fn op_name(&self) -> &'static str { O::NAME }
@@ -239,6 +272,64 @@ impl OpMarker for feed::Feed {
     const NAME: &'static str = "feed";
     type Phase = feed::Phase;
     fn root_span() -> Span { info_span!("feed") }
+}
+
+// Chunk implementations for traits
+impl PhaseSpan for chunk::Phase {
+    fn name(&self) -> &'static str {
+        match self {
+            chunk::Phase::Plan => "plan",
+            chunk::Phase::SelectDocs => "select_docs",
+            chunk::Phase::Tokenize => "tokenize",
+            chunk::Phase::InsertChunk => "insert_chunk",
+            chunk::Phase::UpdateStatus => "update_status",
+        }
+    }
+    fn span(&self) -> Span {
+        match self {
+            chunk::Phase::Plan => info_span!("plan"),
+            chunk::Phase::SelectDocs => info_span!("select_docs"),
+            chunk::Phase::Tokenize => info_span!("tokenize"),
+            chunk::Phase::InsertChunk => info_span!("insert_chunk"),
+            chunk::Phase::UpdateStatus => info_span!("update_status"),
+        }
+    }
+}
+
+impl OpMarker for chunk::Chunk {
+    const NAME: &'static str = "chunk";
+    type Phase = chunk::Phase;
+    fn root_span() -> Span { info_span!("chunk") }
+}
+
+// Embed implementations for traits
+impl PhaseSpan for embed::Phase {
+    fn name(&self) -> &'static str {
+        match self {
+            embed::Phase::Plan => "plan",
+            embed::Phase::CountCandidates => "count_candidates",
+            embed::Phase::LoadModel => "load_model",
+            embed::Phase::FetchBatch => "fetch_batch",
+            embed::Phase::Encode => "encode",
+            embed::Phase::InsertEmbedding => "insert_embedding",
+        }
+    }
+    fn span(&self) -> Span {
+        match self {
+            embed::Phase::Plan => info_span!("plan"),
+            embed::Phase::CountCandidates => info_span!("count_candidates"),
+            embed::Phase::LoadModel => info_span!("load_model"),
+            embed::Phase::FetchBatch => info_span!("fetch_batch"),
+            embed::Phase::Encode => info_span!("encode"),
+            embed::Phase::InsertEmbedding => info_span!("insert_embedding"),
+        }
+    }
+}
+
+impl OpMarker for embed::Embed {
+    const NAME: &'static str = "embed";
+    type Phase = embed::Phase;
+    fn root_span() -> Span { info_span!("embed") }
 }
 
 // Ingest-specific helpers remain available on the typed context

@@ -1,7 +1,11 @@
 use sqlx::Row; // .get()
 use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, NaiveDate, Utc};
+use serde::Serialize;
 use sqlx::PgPool;
+
+use crate::out::{self};
+use crate::out::chunk::Phase as ChunkPhase;
 
 use crate::tokenizer::E5Tokenizer;
 
@@ -18,26 +22,58 @@ pub struct ChunkCmd {
 }
 
 pub async fn run(pool: &PgPool, args: ChunkCmd) -> Result<()> {
+    let log = out::chunk();
+    let _g = log.root_span_kv([
+        ("since", format!("{:?}", args.since)),
+        ("doc_id", format!("{:?}", args.doc_id)),
+        ("tokens_target", args.tokens_target.to_string()),
+        ("overlap", args.overlap.to_string()),
+        ("max_chunks_per_doc", args.max_chunks_per_doc.to_string()),
+        ("force", args.force.to_string()),
+        ("apply", args.apply.to_string()),
+        ("plan_limit", args.plan_limit.to_string()),
+    ]).entered();
+
     // select candidate docs
+    let _s = log.span(&ChunkPhase::SelectDocs).entered();
     let docs = select_docs(pool, &args).await?;
+    drop(_s);
     if docs.is_empty() {
-        println!("ℹ️  No documents to chunk (status='ingest'{}{})",
+        log.info(format!(
+            "ℹ️  No documents to chunk (status='ingest'{}{})",
             if args.doc_id.is_some() { ", --doc-id" } else { "" },
-            if args.since.is_some() { ", --since" } else { "" });
+            if args.since.is_some() { ", --since" } else { "" }
+        ));
         return Ok(());
     }
 
     // Plan-only by default: show plan and exit (no tokenization, no writes)
     if !args.apply {
-        println!(
-            "📝 Chunk plan — docs={} force={} tokens_target={} overlap={} max_chunks_per_doc={}",
-            docs.len(), args.force, args.tokens_target, args.overlap, args.max_chunks_per_doc
-        );
-        for (doc_id, _text_clean) in docs.iter().take(args.plan_limit) {
-            println!("  doc_id={}", doc_id);
+        if out::json_mode() {
+            #[derive(Serialize)]
+            struct ChunkPlan { docs: usize, force: bool, tokens_target: usize, overlap: usize, max_chunks_per_doc: usize, sample_doc_ids: Vec<i64> }
+            let sample_doc_ids: Vec<i64> = docs.iter().take(args.plan_limit).map(|(id, _)| *id).collect();
+            let plan = ChunkPlan {
+                docs: docs.len(),
+                force: args.force,
+                tokens_target: args.tokens_target,
+                overlap: args.overlap,
+                max_chunks_per_doc: args.max_chunks_per_doc,
+                sample_doc_ids,
+            };
+            log.plan(&plan)?;
+        } else {
+            let _sp = log.span(&ChunkPhase::Plan).entered();
+            log.info(format!(
+                "📝 Chunk plan — docs={} force={} tokens_target={} overlap={} max_chunks_per_doc={}",
+                docs.len(), args.force, args.tokens_target, args.overlap, args.max_chunks_per_doc
+            ));
+            for (doc_id, _text_clean) in docs.iter().take(args.plan_limit) {
+                log.info(format!("  doc_id={}", doc_id));
+            }
+            if docs.len() > args.plan_limit { log.info(format!("  ... ({} more)", docs.len() - args.plan_limit)); }
+            log.info("   Use --apply to execute chunking.");
         }
-        if docs.len() > args.plan_limit { println!("  ... ({} more)", docs.len() - args.plan_limit); }
-        println!("   Use --apply to execute chunking.");
         return Ok(());
     }
 
@@ -46,24 +82,35 @@ pub async fn run(pool: &PgPool, args: ChunkCmd) -> Result<()> {
         .context("init E5 tokenizer")?;
 
     // process each doc
+    #[derive(Serialize)]
+    struct DocResult { doc_id: i64, inserted: usize }
+    let mut per_doc: Vec<DocResult> = Vec::new();
+
     for (doc_id, text_clean) in docs {
         let Some(text) = text_clean.as_deref() else { continue; };
         if text.trim().is_empty() { continue; }
 
         // tokenize once per doc (encode needs &mut self)
-        let ids: Vec<u32> = tok.ids_passage(text)
+        let _sp = log.span(&ChunkPhase::Tokenize).entered();
+        let ids: Vec<u32> = tok
+            .ids_passage(text)
             .with_context(|| format!("tokenize doc_id={}", doc_id))?;
+        drop(_sp);
 
         if ids.is_empty() {
+            let _us = log.span(&ChunkPhase::UpdateStatus).entered();
             sqlx::query!("UPDATE rag.document SET status='chunked' WHERE doc_id=$1", doc_id)
                 .execute(pool).await?;
-            println!("✅ doc_id={} → 0 chunks (no tokens)", doc_id);
+            drop(_us);
+            log.info(format!("✅ doc_id={} → 0 chunks (no tokens)", doc_id));
+            per_doc.push(DocResult { doc_id, inserted: 0 });
             continue;
         }
 
         let slices = chunk_token_ids(&ids, args.tokens_target, args.overlap, args.max_chunks_per_doc);
 
         // idempotent: clear any previous chunks for this doc
+        let _ic = log.span(&ChunkPhase::InsertChunk).entered();
         sqlx::query!("DELETE FROM rag.chunk WHERE doc_id = $1", doc_id)
             .execute(pool).await?;
 
@@ -94,15 +141,27 @@ pub async fn run(pool: &PgPool, args: ChunkCmd) -> Result<()> {
 
             inserted += 1;
         }
+        drop(_ic);
 
         if inserted > 0 {
+            let _us = log.span(&ChunkPhase::UpdateStatus).entered();
             sqlx::query!("UPDATE rag.document SET status='chunked' WHERE doc_id=$1", doc_id)
                 .execute(pool).await?;
+            drop(_us);
         }
 
-        println!("✅ doc_id={} → {} chunk(s)", doc_id, inserted);
+        log.info(format!("✅ doc_id={} → {} chunk(s)", doc_id, inserted));
+        per_doc.push(DocResult { doc_id, inserted });
     }
 
+    if out::json_mode() {
+        #[derive(Serialize)]
+        struct ChunkResult { totals: usize, per_doc: Vec<DocResult> }
+        let totals = per_doc.iter().map(|d| d.inserted).sum();
+        let res = ChunkResult { totals, per_doc };
+        let log = out::chunk();
+        log.result(&res)?;
+    }
     Ok(())
 }
 
