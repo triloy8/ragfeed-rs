@@ -103,6 +103,38 @@ pub mod embed {
     }
 }
 
+// Type-state LogCtx: reindex command
+pub mod reindex {
+    #[derive(Copy, Clone, Debug)]
+    pub struct Reindex;
+
+    #[derive(Copy, Clone, Debug)]
+    pub enum Phase {
+        Plan,
+        CreateIndex,
+        Reindex,
+        Swap,
+        Analyze,
+    }
+}
+
+// Type-state LogCtx: gc command
+pub mod gc {
+    #[derive(Copy, Clone, Debug)]
+    pub struct Gc;
+
+    #[derive(Copy, Clone, Debug)]
+    pub enum Phase {
+        Plan,
+        Count,
+        Delete,
+        FixStatus,
+        DropTemp,
+        Analyze,
+        Vacuum,
+    }
+}
+
 // Traits to avoid duplication while keeping literal span names
 pub trait PhaseSpan {
     fn name(&self) -> &'static str;
@@ -125,6 +157,8 @@ pub fn init() -> LogCtx<init::Init> { LogCtx { json: logs_are_json(), _marker: P
 pub fn feed() -> LogCtx<feed::Feed> { LogCtx { json: logs_are_json(), _marker: PhantomData } }
 pub fn chunk() -> LogCtx<chunk::Chunk> { LogCtx { json: logs_are_json(), _marker: PhantomData } }
 pub fn embed() -> LogCtx<embed::Embed> { LogCtx { json: logs_are_json(), _marker: PhantomData } }
+pub fn reindex() -> LogCtx<reindex::Reindex> { LogCtx { json: logs_are_json(), _marker: PhantomData } }
+pub fn gc() -> LogCtx<gc::Gc> { LogCtx { json: logs_are_json(), _marker: PhantomData } }
 
 impl<O: OpMarker> LogCtx<O> {
     fn op_name(&self) -> &'static str { O::NAME }
@@ -330,6 +364,66 @@ impl OpMarker for embed::Embed {
     const NAME: &'static str = "embed";
     type Phase = embed::Phase;
     fn root_span() -> Span { info_span!("embed") }
+}
+
+// Reindex implementations for traits
+impl PhaseSpan for reindex::Phase {
+    fn name(&self) -> &'static str {
+        match self {
+            reindex::Phase::Plan => "plan",
+            reindex::Phase::CreateIndex => "create_index",
+            reindex::Phase::Reindex => "reindex",
+            reindex::Phase::Swap => "swap",
+            reindex::Phase::Analyze => "analyze",
+        }
+    }
+    fn span(&self) -> Span {
+        match self {
+            reindex::Phase::Plan => info_span!("plan"),
+            reindex::Phase::CreateIndex => info_span!("create_index"),
+            reindex::Phase::Reindex => info_span!("reindex"),
+            reindex::Phase::Swap => info_span!("swap"),
+            reindex::Phase::Analyze => info_span!("analyze"),
+        }
+    }
+}
+
+impl OpMarker for reindex::Reindex {
+    const NAME: &'static str = "reindex";
+    type Phase = reindex::Phase;
+    fn root_span() -> Span { info_span!("reindex") }
+}
+
+// GC implementations for traits
+impl PhaseSpan for gc::Phase {
+    fn name(&self) -> &'static str {
+        match self {
+            gc::Phase::Plan => "plan",
+            gc::Phase::Count => "count",
+            gc::Phase::Delete => "delete",
+            gc::Phase::FixStatus => "fix_status",
+            gc::Phase::DropTemp => "drop_temp",
+            gc::Phase::Analyze => "analyze",
+            gc::Phase::Vacuum => "vacuum",
+        }
+    }
+    fn span(&self) -> Span {
+        match self {
+            gc::Phase::Plan => info_span!("plan"),
+            gc::Phase::Count => info_span!("count"),
+            gc::Phase::Delete => info_span!("delete"),
+            gc::Phase::FixStatus => info_span!("fix_status"),
+            gc::Phase::DropTemp => info_span!("drop_temp"),
+            gc::Phase::Analyze => info_span!("analyze"),
+            gc::Phase::Vacuum => info_span!("vacuum"),
+        }
+    }
+}
+
+impl OpMarker for gc::Gc {
+    const NAME: &'static str = "gc";
+    type Phase = gc::Phase;
+    fn root_span() -> Span { info_span!("gc") }
 }
 
 // Ingest-specific helpers remain available on the typed context

@@ -1,7 +1,11 @@
 use anyhow::Result;
 use clap::Args;
 use chrono::{DateTime, Duration, NaiveDate, Utc};
+use serde::Serialize;
 use sqlx::PgPool;
+
+use crate::out::{self};
+use crate::out::gc::Phase as GcPhase;
 
 #[derive(clap::ValueEnum, Clone, Debug)]
 pub enum VacuumMode {
@@ -26,66 +30,112 @@ pub async fn run(pool: &PgPool, args: GcCmd) -> Result<()> {
     let execute = args.apply;
     let mode = if execute { "apply" } else { "plan" };
 
-    println!(
+    let log = out::gc();
+    let _g = log.root_span_kv([
+        ("mode", mode.to_string()),
+        ("feed", format!("{:?}", args.feed)),
+        ("cutoff", format!("{:?}", cutoff)),
+        ("max", args.max.to_string()),
+        ("vacuum", format!("{:?}", args.vacuum)),
+        ("fix_status", args.fix_status.to_string()),
+        ("drop_temp_indexes", args.drop_temp_indexes.to_string()),
+    ]).entered();
+    let _p = log.span(&GcPhase::Plan).entered();
+    log.info(format!(
         "📝 GC plan — mode={} feed={:?} cutoff={:?} max={} vacuum={:?} fix_status={} drop_temp_indexes={}",
-        mode,
-        args.feed,
-        cutoff,
-        args.max,
-        args.vacuum,
-        args.fix_status,
-        args.drop_temp_indexes
-    );
-    if !execute { println!("   Use --apply to execute."); }
+        mode, args.feed, cutoff, args.max, args.vacuum, args.fix_status, args.drop_temp_indexes
+    ));
+    if !execute { log.info("   Use --apply to execute."); }
 
     // orphan chunks
-    let orphan_chunks = count_orphan_chunks(pool, args.feed).await?;
-    println!("🧱 Orphan chunks: {}", orphan_chunks);
+    let orphan_chunks = { let _s = log.span(&GcPhase::Count).entered(); count_orphan_chunks(pool, args.feed).await? };
+    log.info(format!("🧱 Orphan chunks: {}", orphan_chunks));
     if execute && orphan_chunks > 0 { delete_orphan_chunks(pool, args.feed, args.max).await?; }
 
     // orphan embeddings (note: FK should prevent these; no feed scope possible)
-    let orphan_emb = count_orphan_embeddings(pool).await?;
-    println!("🧬 Orphan embeddings: {}", orphan_emb);
+    let orphan_emb = { let _s = log.span(&GcPhase::Count).entered(); count_orphan_embeddings(pool).await? };
+    log.info(format!("🧬 Orphan embeddings: {}", orphan_emb));
     if execute && orphan_emb > 0 { delete_orphan_embeddings(pool, args.max).await?; }
 
     // error docs older than cutoff
-    let err_docs = count_error_docs(pool, cutoff, args.feed).await?;
-    println!("⚠️  Error docs (> cutoff): {}", err_docs);
+    let err_docs = { let _s = log.span(&GcPhase::Count).entered(); count_error_docs(pool, cutoff, args.feed).await? };
+    log.info(format!("⚠️  Error docs (> cutoff): {}", err_docs));
     if execute && err_docs > 0 { delete_error_docs(pool, cutoff, args.feed, args.max).await?; }
 
     // never-chunked docs older than cutoff
-    let stale_docs = count_never_chunked_docs(pool, cutoff, args.feed).await?;
-    println!("⏳ Never-chunked docs (> cutoff): {}", stale_docs);
+    let stale_docs = { let _s = log.span(&GcPhase::Count).entered(); count_never_chunked_docs(pool, cutoff, args.feed).await? };
+    log.info(format!("⏳ Never-chunked docs (> cutoff): {}", stale_docs));
     if execute && stale_docs > 0 { delete_never_chunked_docs(pool, cutoff, args.feed, args.max).await?; }
 
     // bad chunks
-    let bad_chunks = count_bad_chunks(pool, args.feed).await?;
-    println!("🧹 Bad chunks (empty/≤0 tokens): {}", bad_chunks);
+    let bad_chunks = { let _s = log.span(&GcPhase::Count).entered(); count_bad_chunks(pool, args.feed).await? };
+    log.info(format!("🧹 Bad chunks (empty/≤0 tokens): {}", bad_chunks));
     if execute && bad_chunks > 0 { delete_bad_chunks(pool, args.feed, args.max).await?; }
 
     // fix status
     if args.fix_status {
-        if execute { fix_statuses(pool, args.feed).await?; }
-        else { println!("🔎 Would normalize document.status based on chunk/embedding presence"); }
+        if execute { let _s = log.span(&GcPhase::FixStatus).entered(); fix_statuses(pool, args.feed).await?; }
+        else { log.info("🔎 Would normalize document.status based on chunk/embedding presence"); }
     }
 
     // drop temp indexes
     if args.drop_temp_indexes {
-        if execute { drop_temp_indexes(pool).await?; }
-        else { println!("🔎 Would DROP INDEX CONCURRENTLY rag.embedding_vec_ivf_idx_new if exists"); }
+        if execute { let _s = log.span(&GcPhase::DropTemp).entered(); drop_temp_indexes(pool).await?; }
+        else { log.info("🔎 Would DROP INDEX CONCURRENTLY rag.embedding_vec_ivf_idx_new if exists"); }
     }
 
     // vacuum/Analyze
     match args.vacuum {
         VacuumMode::Off => {}
         VacuumMode::Analyze => {
-            if execute { analyze_tables(pool).await?; }
-            else { println!("🔎 Would ANALYZE rag.document, rag.chunk, rag.embedding"); }
+            if execute { let _s = log.span(&GcPhase::Analyze).entered(); analyze_tables(pool).await?; }
+            else { log.info("🔎 Would ANALYZE rag.document, rag.chunk, rag.embedding"); }
         }
         VacuumMode::Full => {
-            if execute { vacuum_full(pool).await?; }
-            else { println!("🔎 Would VACUUM (ANALYZE, FULL) rag.document, rag.chunk, rag.embedding"); }
+            if execute { let _s = log.span(&GcPhase::Vacuum).entered(); vacuum_full(pool).await?; }
+            else { log.info("🔎 Would VACUUM (ANALYZE, FULL) rag.document, rag.chunk, rag.embedding"); }
         }
+    }
+
+    if !execute && out::json_mode() {
+        #[derive(Serialize)]
+        struct Counts { orphan_chunks: i64, orphan_embeddings: i64, error_docs: i64, never_chunked_docs: i64, bad_chunks: i64 }
+        #[derive(Serialize)]
+        struct GcPlanOut {
+            mode: String,
+            feed: Option<i32>,
+            cutoff: Option<DateTime<Utc>>,
+            max: i64,
+            vacuum: String,
+            fix_status: bool,
+            drop_temp_indexes: bool,
+            counts: Counts,
+        }
+        let plan = GcPlanOut {
+            mode: mode.to_string(),
+            feed: args.feed,
+            cutoff,
+            max: args.max,
+            vacuum: format!("{:?}", args.vacuum),
+            fix_status: args.fix_status,
+            drop_temp_indexes: args.drop_temp_indexes,
+            counts: Counts { orphan_chunks, orphan_embeddings: orphan_emb, error_docs: err_docs, never_chunked_docs: stale_docs, bad_chunks },
+        };
+        let log = out::gc();
+        log.plan(&plan)?;
+    } else if execute && out::json_mode() {
+        #[derive(Serialize)]
+        struct Counts { orphan_chunks: i64, orphan_embeddings: i64, error_docs: i64, never_chunked_docs: i64, bad_chunks: i64 }
+        #[derive(Serialize)]
+        struct GcResultOut { counts_before: Counts, fix_status: bool, drop_temp_indexes: bool, vacuum: String }
+        let res = GcResultOut {
+            counts_before: Counts { orphan_chunks, orphan_embeddings: orphan_emb, error_docs: err_docs, never_chunked_docs: stale_docs, bad_chunks },
+            fix_status: args.fix_status,
+            drop_temp_indexes: args.drop_temp_indexes,
+            vacuum: format!("{:?}", args.vacuum),
+        };
+        let log = out::gc();
+        log.result(&res)?;
     }
 
     Ok(())
@@ -142,7 +192,8 @@ async fn delete_orphan_embeddings(pool: &PgPool, max: i64) -> Result<()> {
         .execute(pool)
         .await?;
         if res.rows_affected() == 0 { break; }
-        println!("  🗑️ Deleted {} orphan embeddings", res.rows_affected());
+        let log = out::gc();
+        log.info(format!("  🗑️ Deleted {} orphan embeddings", res.rows_affected()));
     }
     Ok(())
 }
@@ -213,7 +264,8 @@ async fn delete_orphan_chunks(pool: &PgPool, feed: Option<i32>, max: i64) -> Res
             .await?,
         };
         if res.rows_affected() == 0 { break; }
-        println!("  🗑️ Deleted {} orphan chunks", res.rows_affected());
+        let log = out::gc();
+        log.info(format!("  🗑️ Deleted {} orphan chunks", res.rows_affected()));
     }
     Ok(())
 }
@@ -315,7 +367,8 @@ async fn delete_error_docs(pool: &PgPool, cutoff: Option<DateTime<Utc>>, feed: O
             .await?,
         };
         if res.rows_affected() == 0 { break; }
-        println!("  🗑️ Deleted {} error docs", res.rows_affected());
+        let log = out::gc();
+        log.info(format!("  🗑️ Deleted {} error docs", res.rows_affected()));
     }
     Ok(())
 }
@@ -431,7 +484,8 @@ async fn delete_never_chunked_docs(pool: &PgPool, cutoff: Option<DateTime<Utc>>,
             .await?,
         };
         if res.rows_affected() == 0 { break; }
-        println!("  🗑️ Deleted {} never-chunked docs", res.rows_affected());
+        let log = out::gc();
+        log.info(format!("  🗑️ Deleted {} never-chunked docs", res.rows_affected()));
     }
     Ok(())
 }
@@ -494,7 +548,8 @@ async fn delete_bad_chunks(pool: &PgPool, feed: Option<i32>, max: i64) -> Result
             .await?,
         };
         if res.rows_affected() == 0 { break; }
-        println!("  🗑️ Deleted {} bad chunks", res.rows_affected());
+        let log = out::gc();
+        log.info(format!("  🗑️ Deleted {} bad chunks", res.rows_affected()));
     }
     Ok(())
 }
@@ -533,7 +588,8 @@ async fn fix_statuses(pool: &PgPool, feed: Option<i32>) -> Result<()> {
         .execute(pool)
         .await?,
     };
-    println!("✅ Set status=embedded on {} doc(s)", res.rows_affected());
+    let log = out::gc();
+    log.info(format!("✅ Set status=embedded on {} doc(s)", res.rows_affected()));
 
     // chunked
     let res = match feed {
@@ -568,7 +624,8 @@ async fn fix_statuses(pool: &PgPool, feed: Option<i32>) -> Result<()> {
         .execute(pool)
         .await?,
     };
-    println!("✅ Set status=chunked on {} doc(s)", res.rows_affected());
+    let log = out::gc();
+    log.info(format!("✅ Set status=chunked on {} doc(s)", res.rows_affected()));
 
     // ingest
     let res = match feed {
@@ -593,7 +650,8 @@ async fn fix_statuses(pool: &PgPool, feed: Option<i32>) -> Result<()> {
         .execute(pool)
         .await?,
     };
-    println!("✅ Set status=ingest on {} doc(s)", res.rows_affected());
+    let log = out::gc();
+    log.info(format!("✅ Set status=ingest on {} doc(s)", res.rows_affected()));
 
     Ok(())
 }
@@ -602,7 +660,8 @@ async fn drop_temp_indexes(pool: &PgPool) -> Result<()> {
     sqlx::query("DROP INDEX CONCURRENTLY IF EXISTS rag.embedding_vec_ivf_idx_new")
         .execute(pool)
         .await?;
-    println!("🧼 Dropped rag.embedding_vec_ivf_idx_new (if existed)");
+    let log = out::gc();
+    log.info("🧼 Dropped rag.embedding_vec_ivf_idx_new (if existed)");
     Ok(())
 }
 
@@ -616,7 +675,8 @@ async fn analyze_tables(pool: &PgPool) -> Result<()> {
     sqlx::query("ANALYZE rag.embedding")
         .execute(pool)
         .await?;
-    println!("📊 Analyzed rag.document, rag.chunk, rag.embedding");
+    let log = out::gc();
+    log.info("📊 Analyzed rag.document, rag.chunk, rag.embedding");
     Ok(())
 }
 
@@ -631,6 +691,7 @@ async fn vacuum_full(pool: &PgPool) -> Result<()> {
     sqlx::query("VACUUM (ANALYZE, FULL) rag.embedding")
         .execute(pool)
         .await?;
-    println!("🧽 Vacuumed (FULL) rag.document, rag.chunk, rag.embedding");
+    let log = out::gc();
+    log.info("🧽 Vacuumed (FULL) rag.document, rag.chunk, rag.embedding");
     Ok(())
 }

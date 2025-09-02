@@ -1,6 +1,10 @@
 use anyhow::{Context, Result};
 use clap::Args;
+use serde::Serialize;
 use sqlx::PgPool;
+
+use crate::out::{self};
+use crate::out::reindex::Phase as ReindexPhase;
 
 #[derive(Args, Debug)]
 pub struct ReindexCmd {
@@ -9,6 +13,11 @@ pub struct ReindexCmd {
 }
 
 pub async fn run(pool: &PgPool, args: ReindexCmd) -> Result<()> {
+    let log = out::reindex();
+    let _g = log.root_span_kv([
+        ("lists", format!("{:?}", args.lists)),
+        ("apply", args.apply.to_string()),
+    ]).entered();
     // count embeddings to drive heuristic
     let n = sqlx::query!("SELECT COUNT(*)::bigint AS n FROM rag.embedding")
         .fetch_one(pool)
@@ -51,18 +60,27 @@ pub async fn run(pool: &PgPool, args: ReindexCmd) -> Result<()> {
     };
 
     // report plan (plan-only default)
-    println!(
-        "📝 Reindex plan — rows={} current_lists={:?} desired_lists={} action={:?} analyze=TRUE",
-        n, current_lists, desired_lists, action
-    );
     if !args.apply {
-        println!("   Use --apply to execute.");
+        if out::json_mode() {
+            #[derive(Serialize)]
+            struct ReindexPlan { rows: i64, current_lists: Option<i32>, desired_lists: i32, action: String, analyze: bool }
+            let action_s = match action { Action::Create(_) => "create", Action::Reindex => "reindex", Action::Swap(_) => "swap" };
+            let plan = ReindexPlan { rows: n as i64, current_lists, desired_lists, action: action_s.to_string(), analyze: true };
+            log.plan(&plan)?;
+        } else {
+            log.info(format!(
+                "📝 Reindex plan — rows={} current_lists={:?} desired_lists={} action={:?} analyze=TRUE",
+                n, current_lists, desired_lists, action
+            ));
+            log.info("   Use --apply to execute.");
+        }
         return Ok(());
     }
 
     // execute
     match action {
         Action::Create(k) => {
+            let _s = log.span(&ReindexPhase::CreateIndex).entered();
             create_new_index(pool, k, false).await?;
             // rename new to canonical (no old index present)
             sqlx::query("ALTER INDEX rag.embedding_vec_ivf_idx_new RENAME TO embedding_vec_ivf_idx")
@@ -70,12 +88,16 @@ pub async fn run(pool: &PgPool, args: ReindexCmd) -> Result<()> {
                 .await?;
         }
         Action::Reindex => {
+            let _s = log.span(&ReindexPhase::Reindex).entered();
             sqlx::query("REINDEX INDEX CONCURRENTLY rag.embedding_vec_ivf_idx")
                 .execute(pool)
                 .await?;
         }
         Action::Swap(k) => {
+            let _s1 = log.span(&ReindexPhase::CreateIndex).entered();
             create_new_index(pool, k, true).await?;
+            drop(_s1);
+            let _s2 = log.span(&ReindexPhase::Swap).entered();
             // drop old and rename new
             sqlx::query("DROP INDEX CONCURRENTLY IF EXISTS rag.embedding_vec_ivf_idx")
                 .execute(pool)
@@ -87,12 +109,20 @@ pub async fn run(pool: &PgPool, args: ReindexCmd) -> Result<()> {
     }
 
     // always analyze after reindex to refresh planner stats
+    let _a = log.span(&ReindexPhase::Analyze).entered();
     sqlx::query("ANALYZE rag.embedding")
         .execute(pool)
         .await?;
-    println!("📊 Analyzed rag.embedding");
+    drop(_a);
+    log.info("📊 Analyzed rag.embedding");
 
-    println!("✅ Reindex completed.");
+    log.info("✅ Reindex completed.");
+    if out::json_mode() {
+        #[derive(Serialize)]
+        struct ReindexResult { action: String, analyzed: bool, desired_lists: i32, current_lists: Option<i32> }
+        let action_s = match action { Action::Create(_) => "create", Action::Reindex => "reindex", Action::Swap(_) => "swap" };
+        log.result(&ReindexResult { action: action_s.to_string(), analyzed: true, desired_lists, current_lists })?;
+    }
     Ok(())
 }
 
