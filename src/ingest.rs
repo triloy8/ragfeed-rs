@@ -5,9 +5,10 @@ use reqwest::Client;
 use chrono::Utc;
 use url::Url;
 use serde::Serialize;
-use tracing::{info, debug, warn, error, info_span};
+use tracing::{info_span};
 
-use crate::out;
+use crate::out::{self};
+use crate::out::ingest::{Phase as IngestPhase};
 
 use crate::extractor;
 
@@ -22,20 +23,17 @@ pub struct IngestCmd {
 }
 
 pub async fn run(pool: &PgPool, args: IngestCmd) -> Result<()> {
-    let span = if out::logs_are_json() {
-        info_span!(
-            "ingest",
-            apply = args.apply,
-            limit = args.limit as i64,
-            plan_limit = args.plan_limit as i64,
-            force_refetch = args.force_refetch,
-            feed = ?args.feed,
-            feed_url = ?args.feed_url
-        )
-    } else {
-        info_span!("ingest")
-    };
-    let _g = span.enter();
+    let log = out::ingest();
+    let _g = log
+        .root_span_kv([
+            ("apply", args.apply.to_string()),
+            ("limit", (args.limit as i64).to_string()),
+            ("plan_limit", (args.plan_limit as i64).to_string()),
+            ("force_refetch", args.force_refetch.to_string()),
+            ("feed", format!("{:?}", args.feed)),
+            ("feed_url", format!("{:?}", args.feed_url)),
+        ])
+        .entered();
     // resolve feeds — single parameterized query (no branching)
     let feeds = sqlx::query!(
         r#"
@@ -68,16 +66,16 @@ pub async fn run(pool: &PgPool, args: IngestCmd) -> Result<()> {
                 .map(|f| FeedSample { feed_id: f.feed_id, url: f.url.clone(), name: f.name.clone() })
                 .collect();
             let plan = IngestPlan { feeds: feeds.len(), mode: mode.to_string(), limit: args.limit, sample_feeds: samples };
-            out::print_plan("ingest", &plan, None)?;
+            log.plan(&plan)?;
         } else {
-            info!("📝 Ingest plan — feeds={} mode={} limit={}", feeds.len(), mode, args.limit);
+            log.info(format!("📝 Ingest plan — feeds={} mode={} limit={}", feeds.len(), mode, args.limit));
             for f in feeds.iter().take(args.plan_limit) {
-                info!("  feed_id={} url={} name={:?}", f.feed_id, f.url, f.name);
+                log.info(format!("  feed_id={} url={} name={:?}", f.feed_id, f.url, f.name));
             }
             if feeds.len() > args.plan_limit {
-                info!("  ... ({} more)", feeds.len() - args.plan_limit);
+                log.info(format!("  ... ({} more)", feeds.len() - args.plan_limit));
             }
-            info!("   Use --apply to fetch and write.");
+            log.info("   Use --apply to fetch and write.");
         }
         return Ok(());
     }
@@ -96,33 +94,29 @@ pub async fn run(pool: &PgPool, args: IngestCmd) -> Result<()> {
     let mut per_feed: Vec<FeedSummary> = Vec::new();
 
     for f in feeds {
-        let _feed_span = if out::logs_are_json() {
-            info_span!("feed", feed_id = f.feed_id, url = %f.url).entered()
-        } else {
-            info_span!("feed").entered()
-        };
+        let _feed_span = log.span_kv(&IngestPhase::Feed, [("feed_id", f.feed_id.to_string()), ("url", f.url.clone())]).entered();
         let mut inserted = 0usize;
         let mut updated  = 0usize;
         let mut skipped  = 0usize;
         let mut errors   = 0usize;
 
-        let _rss_span = info_span!("fetch_rss").entered();
+        let _rss_span = log.span(&IngestPhase::FetchRss).entered();
         let xml = client.get(&f.url).send().await?.bytes().await?;
         drop(_rss_span);
-        let _parse_span = info_span!("parse_rss").entered();
+        let _parse_span = log.span(&IngestPhase::ParseRss).entered();
         let channel = Channel::read_from(&xml[..])?;
         drop(_parse_span);
 
         for item in channel.items().iter().take(args.limit) {
             if let Some(link) = item.link() {
                 // fetch article
-                let _fetch_span = if out::logs_are_json() { info_span!("fetch_item", url = %link).entered() } else { info_span!("fetch_item").entered() };
+                let _fetch_span = log.span_kv(&IngestPhase::FetchItem, [("url", link.to_string())]).entered();
                 let html = client.get(link).send().await?.text().await?;
                 drop(_fetch_span);
 
                 // per-host extraction with fallback
                 let host = Url::parse(link).ok().and_then(|u| u.host_str().map(|s| s.to_string())).unwrap_or_default();
-                let _extract_span = if out::logs_are_json() { info_span!("extract", host = %host).entered() } else { info_span!("extract").entered() };
+                let _extract_span = log.span_kv(&IngestPhase::Extract, [("host", host.clone())]).entered();
                 let extracted = extractor::extract(&host, &html);
                 drop(_extract_span);
                 let (text, status, error_msg) = match extracted {
@@ -138,7 +132,7 @@ pub async fn run(pool: &PgPool, args: IngestCmd) -> Result<()> {
                 // insert or upsert into rag.document
                 if args.force_refetch {
                     // Refresh existing rows on conflict
-                    let _write_span = if out::logs_are_json() { info_span!("write_doc", mode = "upsert").entered() } else { info_span!("write_doc").entered() };
+                    let _write_span = log.span_kv(&IngestPhase::WriteDoc, [("mode", "upsert".to_string())]).entered();
                     let res = sqlx::query!(
                         r#"
                         INSERT INTO rag.document (feed_id, source_url, source_title,
@@ -167,25 +161,12 @@ pub async fn run(pool: &PgPool, args: IngestCmd) -> Result<()> {
                     )
                     .fetch_one(pool)
                     .await?;
-                    if res.inserted.unwrap_or(false) {
-                        inserted += 1;
-                        if out::logs_are_json() {
-                            debug!(op = "ingest", action = "insert", url = %link, title = item.title().unwrap_or(""), "➕ insert");
-                        } else {
-                            debug!(action = "insert", url = %link, title = item.title().unwrap_or(""), "➕ insert");
-                        }
-                    } else {
-                        updated += 1;
-                        if out::logs_are_json() {
-                            debug!(op = "ingest", action = "update", url = %link, title = item.title().unwrap_or(""), "♻️ update");
-                        } else {
-                            debug!(action = "update", url = %link, title = item.title().unwrap_or(""), "♻️ update");
-                        }
-                    }
+                    if res.inserted.unwrap_or(false) { inserted += 1; log.info_kv("➕ insert", [("url", link.to_string()), ("title", item.title().unwrap_or("").to_string())]); }
+                    else { updated += 1; log.info_kv("♻️ update", [("url", link.to_string()), ("title", item.title().unwrap_or("").to_string())]); }
                     drop(_write_span);
                 } else {
                     // Insert only new rows; ignore duplicates
-                    let _write_span = if out::logs_are_json() { info_span!("write_doc", mode = "insert").entered() } else { info_span!("write_doc").entered() };
+                    let _write_span = log.span_kv(&IngestPhase::WriteDoc, [("mode", "insert".to_string())]).entered();
                     let exec = sqlx::query!(
                         r#"
                         INSERT INTO rag.document (feed_id, source_url, source_title,
@@ -207,29 +188,17 @@ pub async fn run(pool: &PgPool, args: IngestCmd) -> Result<()> {
                     .await?;
                     if exec.rows_affected() == 1 {
                         inserted += 1;
-                        if out::logs_are_json() {
-                            debug!(op = "ingest", action = "insert", url = %link, title = item.title().unwrap_or(""), "➕ insert");
-                        } else {
-                            debug!(action = "insert", url = %link, title = item.title().unwrap_or(""), "➕ insert");
-                        }
+                        log.info_kv("➕ insert", [("url", link.to_string()), ("title", item.title().unwrap_or("").to_string())]);
                     } else {
                         skipped += 1;
-                        if out::logs_are_json() {
-                            debug!(op = "ingest", action = "skip", title = item.title().unwrap_or(""), "↩️ skip");
-                        } else {
-                            debug!(action = "skip", title = item.title().unwrap_or(""), "↩️ skip");
-                        }
+                        log.info_kv("↩️ skip", [("title", item.title().unwrap_or("").to_string())]);
                     }
                     drop(_write_span);
                 }
             } else {
                 // item without link — skip
                 skipped += 1;
-                if out::logs_are_json() {
-                    debug!(op = "ingest", action = "skip", reason = "no-link", "↩️ skip");
-                } else {
-                    debug!(action = "skip", reason = "no-link", "↩️ skip");
-                }
+                log.info_kv("↩️ skip", [("reason", "no-link".to_string())]);
             }
         }
 
@@ -237,42 +206,11 @@ pub async fn run(pool: &PgPool, args: IngestCmd) -> Result<()> {
         total_updated  += updated;
         total_skipped  += skipped;
         total_errors   += errors;
-        if out::logs_are_json() {
-            info!(
-                op = "ingest",
-                feed_id = f.feed_id,
-                inserted,
-                updated,
-                skipped,
-                errors,
-                "✅ Feed {} — inserted={} updated={} skipped={} errors={}",
-                f.feed_id, inserted, updated, skipped, errors
-            );
-        } else {
-            info!(
-                "✅ Feed {} — inserted={} updated={} skipped={} errors={}",
-                f.feed_id, inserted, updated, skipped, errors
-            );
-        }
+        log.feed_summary(f.feed_id, inserted, updated, skipped, errors);
         per_feed.push(FeedSummary { feed_id: f.feed_id, inserted, updated, skipped, errors });
     }
     // Always log human-readable totals at info level
-    if out::logs_are_json() {
-        info!(
-            op = "ingest",
-            inserted = total_inserted,
-            updated = total_updated,
-            skipped = total_skipped,
-            errors = total_errors,
-            "📊 Ingest totals — inserted={} updated={} skipped={} errors={}",
-            total_inserted, total_updated, total_skipped, total_errors
-        );
-    } else {
-        info!(
-            "📊 Ingest totals — inserted={} updated={} skipped={} errors={}",
-            total_inserted, total_updated, total_skipped, total_errors
-        );
-    }
+    log.totals(total_inserted, total_updated, total_skipped, total_errors);
 
     // Optionally emit the machine-readable result envelope to stdout
     if out::json_mode() {
@@ -284,7 +222,7 @@ pub async fn run(pool: &PgPool, args: IngestCmd) -> Result<()> {
             totals: IngestTotals { inserted: total_inserted, updated: total_updated, skipped: total_skipped, errors: total_errors },
             per_feed,
         };
-        out::print_result("ingest", &result, None)?;
+        log.result(&result)?;
     }
     Ok(())
 }
