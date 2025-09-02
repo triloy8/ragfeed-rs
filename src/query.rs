@@ -1,4 +1,4 @@
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::Args;
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use sqlx::PgPool;
@@ -17,7 +17,6 @@ pub struct QueryCmd {
     #[arg(long)] feed: Option<i32>, // restrict results to a specific feed
     #[arg(long)] since: Option<String>, // restrict by document freshness (e.g., 7d or YYYY-MM-DD)
     #[arg(long, default_value_t = false)] show_context: bool, // print preview text for each result
-    #[arg(long, default_value_t = false)] json: bool, // output results as JSON
 
     // E5Encoder config (reused from embed)
     #[arg(long, default_value = "intfloat/e5-small-v2")] pub model_id: String,
@@ -36,20 +35,44 @@ struct QueryResultRow {
 }
 
 pub async fn run(pool: &PgPool, args: QueryCmd) -> Result<()> {
+    use crate::out::{self};
+    use crate::out::query::Phase as QueryPhase;
+    let log = out::query();
+    let _g = log
+        .root_span_kv([
+            ("top_n", args.top_n.to_string()),
+            ("topk", args.topk.to_string()),
+            ("doc_cap", args.doc_cap.to_string()),
+            ("probes", format!("{:?}", args.probes)),
+            ("feed", format!("{:?}", args.feed)),
+            ("since", format!("{:?}", args.since)),
+            ("show_context", args.show_context.to_string()),
+            ("json", out::json_mode().to_string()),
+            ("model_id", args.model_id.clone()),
+            ("device", format!("{:?}", args.device)),
+        ])
+        .entered();
+    let _prep = log.span(&QueryPhase::Prepare).entered();
     // ensure we have embeddings
     let dim_row = sqlx::query!("SELECT dim FROM rag.embedding LIMIT 1")
         .fetch_optional(pool)
         .await?;
     if dim_row.is_none() {
-        println!("ℹ️  No embeddings found. Run `rag embed` first.");
+        log.info("ℹ️  No embeddings found. Run `rag embed` first.");
         return Ok(());
     }
     let db_dim = dim_row.unwrap().dim as usize;
 
     // build encoder and embed the query
-    let mut enc = E5Encoder::new(&args.model_id, args.onnx_filename.as_deref(), args.device)
-        .context("init encoder")?;
-    let qvec = enc.embed_query(&args.query).context("embed query")?;
+    let mut enc = {
+        let _s = log.span(&QueryPhase::Prepare).entered();
+        E5Encoder::new(&args.model_id, args.onnx_filename.as_deref(), args.device)
+            .context("init encoder")?
+    };
+    let qvec = {
+        let _s = log.span(&QueryPhase::EmbedQuery).entered();
+        enc.embed_query(&args.query).context("embed query")?
+    };
     if qvec.len() != db_dim {
         bail!("query embedding dim={} != DB dim={}", qvec.len(), db_dim);
     }
@@ -59,7 +82,8 @@ pub async fn run(pool: &PgPool, args: QueryCmd) -> Result<()> {
         Some(p) => Some(p.max(1)),
         None => recommend_probes(pool).await?,
     };
-    if let Some(p) = probes { 
+    if let Some(p) = probes {
+        let _s = log.span(&QueryPhase::SetProbes).entered();
         // SET LOCAL doesn't allow bind params in SQLx macros; build string safely
         let sql = format!("SET LOCAL ivfflat.probes = {}", p);
         sqlx::query(&sql).execute(pool).await?;
@@ -68,6 +92,7 @@ pub async fn run(pool: &PgPool, args: QueryCmd) -> Result<()> {
     // parse filters
     let since_ts = parse_since(&args.since)?;
 
+    let _fetch = log.span(&QueryPhase::FetchCandidates).entered();
     // fetch ANN candidates
     let candidates = fetch_ann_candidates(
         pool, 
@@ -77,12 +102,14 @@ pub async fn run(pool: &PgPool, args: QueryCmd) -> Result<()> {
         since_ts,
         args.show_context,
     ).await?;
+    drop(_fetch);
 
     if candidates.is_empty() {
-        println!("ℹ️  No results");
+        log.info("ℹ️  No results");
         return Ok(());
     }
 
+    let _pf = log.span(&QueryPhase::PostFilter).entered();
     // apply per-doc cap and take topk
     let mut per_doc_seen: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
     let mut out: Vec<QueryResultRow> = Vec::new();
@@ -100,15 +127,17 @@ pub async fn run(pool: &PgPool, args: QueryCmd) -> Result<()> {
         });
         if out.len() >= args.topk { break; }
     }
+    drop(_pf);
 
-    if args.json {
-        println!("{}", serde_json::to_string_pretty(&out)?);
+    let _out_span = log.span(&QueryPhase::Output).entered();
+    if out::json_mode() {
+        log.result(&out)?;
     } else {
-        println!("🔍 Results:");
+        log.info("🔍 Results:");
         for r in &out {
-            println!("#{}  dist={:.4}  chunk={} doc={}  {:?}", r.rank, r.distance, r.chunk_id, r.doc_id, r.title);
+            log.info(format!("#{}  dist={:.4}  chunk={} doc={}  {:?}", r.rank, r.distance, r.chunk_id, r.doc_id, r.title));
             if args.show_context {
-                if let Some(p) = &r.preview { println!("  {}", p.replace('\n', " ")); }
+                if let Some(p) = &r.preview { log.info(format!("  {}", p.replace('\n', " "))); }
             }
         }
     }

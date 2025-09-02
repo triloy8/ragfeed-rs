@@ -149,6 +149,22 @@ pub mod stats {
     }
 }
 
+// Type-state LogCtx: query command
+pub mod query {
+    #[derive(Copy, Clone, Debug)]
+    pub struct Query;
+
+    #[derive(Copy, Clone, Debug)]
+    pub enum Phase {
+        Prepare,
+        EmbedQuery,
+        SetProbes,
+        FetchCandidates,
+        PostFilter,
+        Output,
+    }
+}
+
 // Traits to avoid duplication while keeping literal span names
 pub trait PhaseSpan {
     fn name(&self) -> &'static str;
@@ -174,6 +190,7 @@ pub fn embed() -> LogCtx<embed::Embed> { LogCtx { json: logs_are_json(), _marker
 pub fn reindex() -> LogCtx<reindex::Reindex> { LogCtx { json: logs_are_json(), _marker: PhantomData } }
 pub fn gc() -> LogCtx<gc::Gc> { LogCtx { json: logs_are_json(), _marker: PhantomData } }
 pub fn stats() -> LogCtx<stats::Stats> { LogCtx { json: logs_are_json(), _marker: PhantomData } }
+pub fn query() -> LogCtx<query::Query> { LogCtx { json: logs_are_json(), _marker: PhantomData } }
 
 impl<O: OpMarker> LogCtx<O> {
     fn op_name(&self) -> &'static str { O::NAME }
@@ -465,6 +482,36 @@ impl OpMarker for stats::Stats {
     const NAME: &'static str = "stats";
     type Phase = stats::Phase;
     fn root_span() -> Span { info_span!("stats") }
+}
+
+// Query implementations for traits
+impl PhaseSpan for query::Phase {
+    fn name(&self) -> &'static str {
+        match self {
+            query::Phase::Prepare => "prepare",
+            query::Phase::EmbedQuery => "embed_query",
+            query::Phase::SetProbes => "set_probes",
+            query::Phase::FetchCandidates => "fetch_candidates",
+            query::Phase::PostFilter => "post_filter",
+            query::Phase::Output => "output",
+        }
+    }
+    fn span(&self) -> Span {
+        match self {
+            query::Phase::Prepare => info_span!("prepare"),
+            query::Phase::EmbedQuery => info_span!("embed_query"),
+            query::Phase::SetProbes => info_span!("set_probes"),
+            query::Phase::FetchCandidates => info_span!("fetch_candidates"),
+            query::Phase::PostFilter => info_span!("post_filter"),
+            query::Phase::Output => info_span!("output"),
+        }
+    }
+}
+
+impl OpMarker for query::Query {
+    const NAME: &'static str = "query";
+    type Phase = query::Phase;
+    fn root_span() -> Span { info_span!("query") }
 }
 
 // Ingest-specific helpers remain available on the typed context
