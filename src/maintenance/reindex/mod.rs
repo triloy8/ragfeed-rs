@@ -58,6 +58,7 @@ pub async fn run(pool: &PgPool, args: ReindexCmd) -> Result<()> {
 
     // plan-only output
     if !args.apply {
+        let _sp = log.span(&ReindexPhase::Plan).entered();
         if telemetry::config::json_mode() {
             #[derive(Serialize)]
             struct ReindexPlan { rows: i64, current_lists: Option<i32>, desired_lists: i32, action: String, analyze: bool }

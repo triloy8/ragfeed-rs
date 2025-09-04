@@ -66,7 +66,7 @@ pub async fn run(pool: &PgPool, args: IngestCmd) -> Result<()> {
             log.info(format!("📝 Ingest plan — feeds={} mode={} limit={}", feeds.len(), mode, args.limit));
             for f in feeds.iter().take(args.plan_limit) { log.info(format!("  feed_id={} url={} name={:?}", f.feed_id, f.url, f.name)); }
             if feeds.len() > args.plan_limit { log.info(format!("  ... ({} more)", feeds.len() - args.plan_limit)); }
-            log.info("   Use --apply to fetch and write.");
+            log.info("   Use --apply to execute.");
         }
         return Ok(());
     }

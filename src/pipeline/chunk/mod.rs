@@ -76,7 +76,7 @@ pub async fn run(pool: &PgPool, args: ChunkCmd) -> Result<()> {
                 log.info(format!("  doc_id={}", doc_id));
             }
             if docs.len() > args.plan_limit { log.info(format!("  ... ({} more)", docs.len() - args.plan_limit)); }
-            log.info("   Use --apply to execute chunking.");
+            log.info("   Use --apply to execute.");
         }
         return Ok(());
     }

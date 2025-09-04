@@ -66,7 +66,7 @@ pub async fn run(pool: &PgPool, args: EmbedCmd) -> Result<()> {
             ));
             for id in &ids { log.info(format!("  chunk_id={}", id)); }
             if (args.plan_limit as i64) < planned { log.info("  ... (more up to planned count)"); }
-            log.info("   Use --apply to run embedding.");
+            log.info("   Use --apply to execute.");
         }
         return Ok(());
     }

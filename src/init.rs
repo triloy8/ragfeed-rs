@@ -25,7 +25,7 @@ pub async fn run(pool: &PgPool, args: InitCmd) -> Result<()> {
         } else {
             let _s = log.span(&InitPhase::Plan).entered();
             log.info("📝 Init plan — would run migrations from ./migrations");
-            log.info("   Use --apply to execute migrations.");
+            log.info("   Use --apply to execute.");
         }
         return Ok(());
     }
