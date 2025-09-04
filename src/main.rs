@@ -13,7 +13,6 @@ mod ingestion;
 mod tokenizer;
 mod encoder;
 mod stats;
-mod reindex;
 mod query;
 mod util;
 mod maintenance;
@@ -41,7 +40,7 @@ enum Commands {
     Chunk(pipeline::chunk::ChunkCmd),
     Embed(pipeline::embed::EmbedCmd),
     Stats(stats::StatsCmd),
-    Reindex(reindex::ReindexCmd),
+    Reindex(maintenance::reindex::ReindexCmd),
     Gc(maintenance::gc::GcCmd),
     Query(query::QueryCmd),
 }
@@ -69,7 +68,7 @@ async fn main() -> Result<()> {
         Commands::Chunk(args) => pipeline::chunk::run(&pool, args).await?,
         Commands::Embed(args) => pipeline::embed::run(&pool, args).await?,
         Commands::Stats(args) => stats::run(&pool, args).await?,
-        Commands::Reindex(args) => reindex::run(&pool, args).await?,
+        Commands::Reindex(args) => maintenance::reindex::run(&pool, args).await?,
         Commands::Gc(args) => maintenance::gc::run(&pool, args).await?,
         Commands::Query(args) => query::run(&pool, args).await?,
         // Commands::Eval => println!("TODO: eval"),
