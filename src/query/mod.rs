@@ -5,6 +5,7 @@ use serde::Serialize;
 use sqlx::PgPool;
 
 use crate::encoder::{Device, E5Encoder};
+use crate::encoder::traits::Embedder;
 use crate::util::time::parse_since_opt;
 
 use crate::telemetry::{self};
@@ -61,10 +62,10 @@ pub async fn run(pool: &PgPool, args: QueryCmd) -> Result<()> {
     let db_dim = dim_row.unwrap().dim as usize;
 
     // build encoder and embed the query
-    let mut enc = {
+    let mut enc: Box<dyn Embedder> = {
         let _s = log.span(&QueryPhase::Prepare).entered();
-        E5Encoder::new(&args.model_id, args.onnx_filename.as_deref(), args.device)
-            .context("init encoder")?
+        Box::new(E5Encoder::new(&args.model_id, args.onnx_filename.as_deref(), args.device)
+            .context("init encoder")?)
     };
     let qvec = {
         let _s = log.span(&QueryPhase::EmbedQuery).entered();

@@ -9,6 +9,7 @@ use ort::session::Session;
 use ort::session::builder::{GraphOptimizationLevel, SessionBuilder};
 use ort::inputs;
 use ort::value::Value;
+use crate::encoder::traits::Embedder;
 
 #[derive(Copy, Clone, Debug, clap::ValueEnum)]
 pub enum Device {
@@ -119,6 +120,18 @@ impl E5Encoder {
     }
 }
 
+impl Embedder for E5Encoder {
+    fn embed_queries(&mut self, queries: &[String]) -> Result<Vec<Vec<f32>>> {
+        E5Encoder::embed_queries(self, queries)
+    }
+    fn embed_passages(&mut self, passages: &[String]) -> Result<Vec<Vec<f32>>> {
+        E5Encoder::embed_passages(self, passages)
+    }
+    fn embed_query(&mut self, query: &str) -> Result<Vec<f32>> {
+        E5Encoder::embed_query(self, query)
+    }
+}
+
 fn l2_normalize(mut v: Vec<f32>) -> Vec<f32> {
     let norm = v.iter().map(|x| (*x as f64) * (*x as f64)).sum::<f64>().sqrt() as f32;
     if norm > 0.0 {
@@ -178,4 +191,3 @@ fn build_session(onnx_path: &std::path::Path, device: Device) -> Result<Session>
         .map_err(|e| anyhow!("{}", e))?;
     Ok(session)
 }
-

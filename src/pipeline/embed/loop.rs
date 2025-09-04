@@ -1,7 +1,7 @@
 use anyhow::{bail, Result};
 use sqlx::PgPool;
 
-use crate::encoder::E5Encoder;
+use crate::encoder::traits::Embedder;
 use crate::telemetry::{self};
 use crate::telemetry::ops::embed::Phase as EmbedPhase;
 
@@ -9,7 +9,7 @@ use super::db;
 
 pub async fn embed_force_once(
     pool: &PgPool,
-    encoder: &mut E5Encoder,
+    encoder: &mut dyn Embedder,
     model_tag: &str,
     dim_expect: usize,
     batch: usize,
@@ -46,7 +46,7 @@ pub async fn embed_force_once(
 
 pub async fn embed_missing_paged(
     pool: &PgPool,
-    encoder: &mut E5Encoder,
+    encoder: &mut dyn Embedder,
     model_tag: &str,
     dim_expect: usize,
     batch: usize,

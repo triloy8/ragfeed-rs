@@ -4,6 +4,7 @@ use serde::Serialize;
 use sqlx::PgPool;
 
 use crate::encoder::{Device, E5Encoder};
+use crate::encoder::traits::Embedder;
 use crate::telemetry::{self};
 use crate::telemetry::ops::embed::Phase as EmbedPhase;
 
@@ -72,13 +73,13 @@ pub async fn run(pool: &PgPool, args: EmbedCmd) -> Result<()> {
 
     // APPLY: Build encoder
     let _lm = log.span(&EmbedPhase::LoadModel).entered();
-    let mut encoder = E5Encoder::new(&args.model_id, args.onnx_filename.as_deref(), args.device)?;
+    let mut encoder: Box<dyn Embedder> = Box::new(E5Encoder::new(&args.model_id, args.onnx_filename.as_deref(), args.device)?);
     drop(_lm);
 
     let total = if args.force {
-        r#loop::embed_force_once(pool, &mut encoder, &model_tag, args.dim, batch, args.max).await?
+        r#loop::embed_force_once(pool, encoder.as_mut(), &model_tag, args.dim, batch, args.max).await?
     } else {
-        r#loop::embed_missing_paged(pool, &mut encoder, &model_tag, args.dim, batch, args.max).await?
+        r#loop::embed_missing_paged(pool, encoder.as_mut(), &model_tag, args.dim, batch, args.max).await?
     };
 
     if total == 0 {
