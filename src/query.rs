@@ -1,11 +1,12 @@
 use anyhow::{bail, Context, Result};
 use clap::Args;
-use chrono::{DateTime, Duration, NaiveDate, Utc};
+use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use serde::Serialize;
 
 use crate::encoder::{Device, E5Encoder};
 use pgvector::Vector as PgVector;
+use crate::util::time::parse_since_opt;
 
 #[derive(Args, Debug)]
 pub struct QueryCmd {
@@ -90,7 +91,7 @@ pub async fn run(pool: &PgPool, args: QueryCmd) -> Result<()> {
     }
 
     // parse filters
-    let since_ts = parse_since(&args.since)?;
+    let since_ts = parse_since_opt(&args.since)?;
 
     let _fetch = log.span(&QueryPhase::FetchCandidates).entered();
     // fetch ANN candidates
@@ -239,24 +240,4 @@ async fn recommend_probes(pool: &PgPool) -> Result<Option<i32>> {
     Ok(lists.map(|k| (k / 10).max(1)))
 }
 
-fn parse_since(since: &Option<String>) -> Result<Option<DateTime<Utc>>> {
-    let Some(s) = since.as_ref() else { return Ok(None); };
-
-    // "2d" → now - 2 days
-    if let Some(stripped) = s.strip_suffix('d') {
-        if let Ok(days) = stripped.parse::<i64>() {
-            if days > 0 { return Ok(Some(Utc::now() - Duration::days(days))); }
-        }
-    }
-    // "YYYY-MM-DD"
-    if let Ok(nd) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
-        let dt = nd.and_hms_opt(0,0,0).unwrap();
-        return Ok(Some(DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc)));
-    }
-    // RFC3339
-    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
-        return Ok(Some(dt.with_timezone(&Utc)));
-    }
-    // if unparseable -> ignore filter
-    Ok(None)
-}
+// time parsing moved to crate::util::time

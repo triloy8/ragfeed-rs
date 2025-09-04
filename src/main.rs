@@ -10,15 +10,17 @@ mod out;
 mod init;
 mod feed;
 mod ingest;
-mod chunk;
 mod tokenizer;
 mod extractor;
 mod encoder;
 mod embed;
 mod stats;
 mod reindex;
-mod gc;
 mod query;
+mod util;
+mod maintenance;
+mod telemetry;
+mod pipeline;
 
 #[derive(Parser)]
 #[command(name = "rag", about = "RAG pipeline CLI")]
@@ -38,11 +40,11 @@ enum Commands {
     Init(init::InitCmd),
     Feed(feed::FeedCmd),
     Ingest(ingest::IngestCmd),
-    Chunk(chunk::ChunkCmd),
+    Chunk(pipeline::chunk::ChunkCmd),
     Embed(embed::EmbedCmd),
     Stats(stats::StatsCmd),
     Reindex(reindex::ReindexCmd),
-    Gc(gc::GcCmd),
+    Gc(maintenance::gc::GcCmd),
     Query(query::QueryCmd),
 }
 
@@ -54,7 +56,7 @@ async fn main() -> Result<()> {
     let _t0 = Instant::now();
 
     // initialize logging/tracing (stderr). Respect RUST_LOG and RAG_LOG_FORMAT
-    init_tracing();
+    telemetry::config::init_tracing();
     let dsn = cli
         .dsn
         .or_else(|| env::var("DATABASE_URL").ok())
@@ -66,11 +68,11 @@ async fn main() -> Result<()> {
         Commands::Init(args) => init::run(&pool, args).await?,
         Commands::Feed(args) => feed::run(&pool, args).await?,
         Commands::Ingest(args) => ingest::run(&pool, args).await?,
-        Commands::Chunk(args) => chunk::run(&pool, args).await?,
+        Commands::Chunk(args) => pipeline::chunk::run(&pool, args).await?,
         Commands::Embed(args) => embed::run(&pool, args).await?,
         Commands::Stats(args) => stats::run(&pool, args).await?,
         Commands::Reindex(args) => reindex::run(&pool, args).await?,
-        Commands::Gc(args) => gc::run(&pool, args).await?,
+        Commands::Gc(args) => maintenance::gc::run(&pool, args).await?,
         Commands::Query(args) => query::run(&pool, args).await?,
         // Commands::Eval => println!("TODO: eval"),
     }
@@ -78,24 +80,4 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn init_tracing() {
-    use tracing_subscriber::{fmt, EnvFilter};
-    use tracing_subscriber::prelude::*; // for .with()
-
-    // Default filter if RUST_LOG unset
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info"));
-
-    let fmt_layer = fmt::layer().with_target(false);
-    let builder = tracing_subscriber::registry().with(filter);
-
-    match env::var("RAG_LOG_FORMAT").as_deref() {
-        Ok("json") => {
-            let _ = builder.with(fmt_layer.json().flatten_event(true)).try_init();
-        }
-        _ => {
-            // human-friendly compact text
-            let _ = builder.with(fmt_layer.compact()).try_init();
-        }
-    }
-}
+// init_tracing moved to telemetry::config::init_tracing
