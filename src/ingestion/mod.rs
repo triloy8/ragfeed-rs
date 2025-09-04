@@ -12,6 +12,7 @@ use crate::telemetry::ops::ingest::Phase as IngestPhase;
 mod fetch;
 mod parse;
 mod write;
+mod types;
 pub mod extractor;
 
 #[derive(Args)]
@@ -55,10 +56,7 @@ pub async fn run(pool: &PgPool, args: IngestCmd) -> Result<()> {
     if !args.apply {
         let mode = if args.force_refetch { "upsert" } else { "insert-only" };
         if telemetry::config::json_mode() {
-            #[derive(Serialize)]
-            struct FeedSample { feed_id: i32, url: String, name: Option<String> }
-            #[derive(Serialize)]
-            struct IngestPlan { feeds: usize, mode: String, limit: usize, sample_feeds: Vec<FeedSample> }
+            use types::{FeedSample, IngestPlan};
             let samples: Vec<FeedSample> = feeds.iter().take(args.plan_limit)
                 .map(|f| FeedSample { feed_id: f.feed_id, url: f.url.clone(), name: f.name.clone() })
                 .collect();
@@ -80,8 +78,7 @@ pub async fn run(pool: &PgPool, args: IngestCmd) -> Result<()> {
     let mut total_skipped = 0usize;
     let mut total_errors  = 0usize;
 
-    #[derive(Serialize)]
-    struct FeedSummary { feed_id: i32, inserted: usize, updated: usize, skipped: usize, errors: usize }
+    use types::FeedSummary;
     let mut per_feed: Vec<FeedSummary> = Vec::new();
 
     for f in feeds {
@@ -138,10 +135,7 @@ pub async fn run(pool: &PgPool, args: IngestCmd) -> Result<()> {
     log.totals(total_inserted, total_updated, total_skipped, total_errors);
 
     if telemetry::config::json_mode() {
-        #[derive(Serialize)]
-        struct IngestTotals { inserted: usize, updated: usize, skipped: usize, errors: usize }
-        #[derive(Serialize)]
-        struct IngestApply { totals: IngestTotals, per_feed: Vec<FeedSummary> }
+        use types::{IngestTotals, IngestApply};
         let result = IngestApply {
             totals: IngestTotals { inserted: total_inserted, updated: total_updated, skipped: total_skipped, errors: total_errors },
             per_feed,
