@@ -9,8 +9,8 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use sqlx::PgPool;
 
-use crate::out::{self};
-use crate::out::gc::Phase as GcPhase;
+use crate::telemetry::{self};
+use crate::telemetry::ops::gc::Phase as GcPhase;
 use crate::util::time::parse_cutoff_str;
 
 #[derive(clap::ValueEnum, Clone, Debug)]
@@ -36,7 +36,7 @@ pub async fn run(pool: &PgPool, args: GcCmd) -> Result<()> {
     let execute = args.apply;
     let mode = if execute { "apply" } else { "plan" };
 
-    let log = out::gc();
+    let log = telemetry::gc();
     let _g = log.root_span_kv([
         ("mode", mode.to_string()),
         ("feed", format!("{:?}", args.feed)),
@@ -103,7 +103,7 @@ pub async fn run(pool: &PgPool, args: GcCmd) -> Result<()> {
         }
     }
 
-    if !execute && out::json_mode() {
+    if !execute && telemetry::config::json_mode() {
         #[derive(Serialize)]
         struct Counts { orphan_chunks: i64, orphan_embeddings: i64, error_docs: i64, never_chunked_docs: i64, bad_chunks: i64 }
         #[derive(Serialize)]
@@ -127,9 +127,9 @@ pub async fn run(pool: &PgPool, args: GcCmd) -> Result<()> {
             drop_temp_indexes: args.drop_temp_indexes,
             counts: Counts { orphan_chunks, orphan_embeddings: orphan_emb, error_docs: err_docs, never_chunked_docs: stale_docs, bad_chunks },
         };
-        let log = out::gc();
+        let log = telemetry::gc();
         log.plan(&plan)?;
-    } else if execute && out::json_mode() {
+    } else if execute && telemetry::config::json_mode() {
         #[derive(Serialize)]
         struct Counts { orphan_chunks: i64, orphan_embeddings: i64, error_docs: i64, never_chunked_docs: i64, bad_chunks: i64 }
         #[derive(Serialize)]
@@ -140,7 +140,7 @@ pub async fn run(pool: &PgPool, args: GcCmd) -> Result<()> {
             drop_temp_indexes: args.drop_temp_indexes,
             vacuum: format!("{:?}", args.vacuum),
         };
-        let log = out::gc();
+        let log = telemetry::gc();
         log.result(&res)?;
     }
 

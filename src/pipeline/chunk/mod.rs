@@ -6,8 +6,8 @@ use clap::Args;
 use serde::Serialize;
 use sqlx::PgPool;
 
-use crate::out::{self};
-use crate::out::chunk::Phase as ChunkPhase;
+use crate::telemetry::{self};
+use crate::telemetry::ops::chunk::Phase as ChunkPhase;
 use crate::tokenizer::E5Tokenizer;
 use crate::util::time::parse_since_opt;
 
@@ -27,7 +27,7 @@ pub struct ChunkCmd {
 }
 
 pub async fn run(pool: &PgPool, args: ChunkCmd) -> Result<()> {
-    let log = out::chunk();
+    let log = telemetry::chunk();
     let _g = log.root_span_kv([
         ("since", format!("{:?}", args.since)),
         ("doc_id", format!("{:?}", args.doc_id)),
@@ -53,7 +53,7 @@ pub async fn run(pool: &PgPool, args: ChunkCmd) -> Result<()> {
     }
 
     if !args.apply {
-        if out::json_mode() {
+        if telemetry::config::json_mode() {
             #[derive(Serialize)]
             struct ChunkPlan { docs: usize, force: bool, tokens_target: usize, overlap: usize, max_chunks_per_doc: usize, sample_doc_ids: Vec<i64> }
             let sample_doc_ids: Vec<i64> = docs.iter().take(args.plan_limit).map(|(id, _)| *id).collect();
@@ -153,14 +153,13 @@ pub async fn run(pool: &PgPool, args: ChunkCmd) -> Result<()> {
         per_doc.push(DocResult { doc_id, inserted });
     }
 
-    if out::json_mode() {
+    if telemetry::config::json_mode() {
         #[derive(Serialize)]
         struct ChunkResult { totals: usize, per_doc: Vec<DocResult> }
         let totals = per_doc.iter().map(|d| d.inserted).sum();
         let res = ChunkResult { totals, per_doc };
-        let log = out::chunk();
+        let log = telemetry::chunk();
         log.result(&res)?;
     }
     Ok(())
 }
-

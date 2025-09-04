@@ -1,12 +1,12 @@
 use anyhow::Result;
 use sqlx::PgPool;
 
-use crate::out::{self};
-use crate::out::stats::Phase as StatsPhase;
+use crate::telemetry::{self};
+use crate::telemetry::ops::stats::Phase as StatsPhase;
 use crate::stats::types::*;
 
 pub async fn feed_stats(pool: &PgPool, feed_id: i32, doc_limit: i64) -> Result<()> {
-    let log = out::stats();
+    let log = telemetry::stats();
     let _s = log.span(&StatsPhase::FeedStats).entered();
 
     // feed header
@@ -197,7 +197,7 @@ pub async fn feed_stats(pool: &PgPool, feed_id: i32, doc_limit: i64) -> Result<(
     }
 
     // JSON envelope
-    if out::json_mode() {
+    if telemetry::config::json_mode() {
         let last_fetched = sqlx::query!(
             r#"SELECT MAX(fetched_at) AS last_fetched FROM rag.document WHERE feed_id = $1"#,
             feed_id
@@ -276,4 +276,3 @@ pub async fn feed_stats(pool: &PgPool, feed_id: i32, doc_limit: i64) -> Result<(
 
     Ok(())
 }
-

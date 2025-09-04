@@ -5,7 +5,6 @@ use dotenvy::dotenv;
 use std::env;
 use std::time::Instant;
 
-mod out;
 
 mod init;
 mod feed;
@@ -49,7 +48,7 @@ enum Commands {
 async fn main() -> Result<()> {
     dotenv().ok();
     let cli = Cli::parse();
-    out::set_json_mode(cli.json);
+    telemetry::config::set_json_mode(cli.json);
     let _t0 = Instant::now();
 
     // initialize logging/tracing (stderr). Respect RUST_LOG and RAG_LOG_FORMAT

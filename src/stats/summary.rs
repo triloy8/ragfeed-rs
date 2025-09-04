@@ -1,12 +1,12 @@
 use anyhow::Result;
 use sqlx::PgPool;
 
-use crate::out::{self};
-use crate::out::stats::Phase as StatsPhase;
+use crate::telemetry::{self};
+use crate::telemetry::ops::stats::Phase as StatsPhase;
 use crate::stats::types::*;
 
 pub async fn summary(pool: &PgPool) -> Result<()> {
-    let log = out::stats();
+    let log = telemetry::stats();
     let _s = log.span(&StatsPhase::Summary).entered();
 
     // feeds listing
@@ -169,7 +169,7 @@ pub async fn summary(pool: &PgPool) -> Result<()> {
     log.info(format!("   Missing embeddings: {}", missing));
 
     // JSON envelope
-    if out::json_mode() {
+    if telemetry::config::json_mode() {
         let feeds_out: Vec<StatsFeedRow> = feeds
             .into_iter()
             .map(|f| StatsFeedRow { feed_id: f.feed_id, name: f.name, url: f.url, is_active: f.is_active, added_at: f.added_at })
@@ -208,4 +208,3 @@ pub async fn summary(pool: &PgPool) -> Result<()> {
 
     Ok(())
 }
-

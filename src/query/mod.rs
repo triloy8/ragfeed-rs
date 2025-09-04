@@ -7,8 +7,8 @@ use sqlx::PgPool;
 use crate::encoder::{Device, E5Encoder};
 use crate::util::time::parse_since_opt;
 
-use crate::out::{self};
-use crate::out::query::Phase as QueryPhase;
+use crate::telemetry::{self};
+use crate::telemetry::ops::query::Phase as QueryPhase;
 
 mod db;
 mod post;
@@ -33,7 +33,7 @@ pub struct QueryCmd {
 }
 
 pub async fn run(pool: &PgPool, args: QueryCmd) -> Result<()> {
-    let log = out::query();
+    let log = telemetry::query();
     let _g = log
         .root_span_kv([
             ("top_n", args.top_n.to_string()),
@@ -43,7 +43,7 @@ pub async fn run(pool: &PgPool, args: QueryCmd) -> Result<()> {
             ("feed", format!("{:?}", args.feed)),
             ("since", format!("{:?}", args.since)),
             ("show_context", args.show_context.to_string()),
-            ("json", out::json_mode().to_string()),
+            ("json", telemetry::config::json_mode().to_string()),
             ("model_id", args.model_id.clone()),
             ("device", format!("{:?}", args.device)),
         ])
@@ -113,7 +113,7 @@ pub async fn run(pool: &PgPool, args: QueryCmd) -> Result<()> {
 
     // output
     let _out_span = log.span(&QueryPhase::Output).entered();
-    if out::json_mode() {
+    if telemetry::config::json_mode() {
         log.result(&out_rows)?;
     } else {
         log.info("🔍 Results:");
@@ -130,4 +130,3 @@ pub async fn run(pool: &PgPool, args: QueryCmd) -> Result<()> {
 
     Ok(())
 }
-

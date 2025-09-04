@@ -3,8 +3,8 @@ use clap::Args;
 use serde::Serialize;
 use sqlx::PgPool;
 
-use crate::out::{self};
-use crate::out::reindex::Phase as ReindexPhase;
+use crate::telemetry::{self};
+use crate::telemetry::ops::reindex::Phase as ReindexPhase;
 
 mod heuristics;
 mod ops;
@@ -16,7 +16,7 @@ pub struct ReindexCmd {
 }
 
 pub async fn run(pool: &PgPool, args: ReindexCmd) -> Result<()> {
-    let log = out::reindex();
+    let log = telemetry::reindex();
     let _g = log.root_span_kv([
         ("lists", format!("{:?}", args.lists)),
         ("apply", args.apply.to_string()),
@@ -58,7 +58,7 @@ pub async fn run(pool: &PgPool, args: ReindexCmd) -> Result<()> {
 
     // plan-only output
     if !args.apply {
-        if out::json_mode() {
+        if telemetry::config::json_mode() {
             #[derive(Serialize)]
             struct ReindexPlan { rows: i64, current_lists: Option<i32>, desired_lists: i32, action: String, analyze: bool }
             let action_s = match action { Action::Create(_) => "create", Action::Reindex => "reindex", Action::Swap(_) => "swap" };
@@ -110,7 +110,7 @@ pub async fn run(pool: &PgPool, args: ReindexCmd) -> Result<()> {
     log.info("📊 Analyzed rag.embedding");
     log.info("✅ Reindex completed.");
 
-    if out::json_mode() {
+    if telemetry::config::json_mode() {
         #[derive(Serialize)]
         struct ReindexResult { action: String, analyzed: bool, desired_lists: i32, current_lists: Option<i32> }
         let action_s = match action { Action::Create(_) => "create", Action::Reindex => "reindex", Action::Swap(_) => "swap" };
@@ -121,4 +121,3 @@ pub async fn run(pool: &PgPool, args: ReindexCmd) -> Result<()> {
 
 #[derive(Debug)]
 enum Action { Create(i32), Reindex, Swap(i32) }
-

@@ -1,12 +1,12 @@
 use anyhow::Result;
 use sqlx::PgPool;
 
-use crate::out::{self};
-use crate::out::stats::Phase as StatsPhase;
+use crate::telemetry::{self};
+use crate::telemetry::ops::stats::Phase as StatsPhase;
 use crate::stats::types::*;
 
 pub async fn snapshot_doc(pool: &PgPool, id: i64, chunk_limit: i64) -> Result<()> {
-    let log = out::stats();
+    let log = telemetry::stats();
     let _s = log.span(&StatsPhase::DocSnapshot).entered();
     let row = sqlx::query!(
         r#"
@@ -56,7 +56,7 @@ pub async fn snapshot_doc(pool: &PgPool, id: i64, chunk_limit: i64) -> Result<()
     }
 
     // JSON envelope
-    if out::json_mode() {
+    if telemetry::config::json_mode() {
         let doc = StatsDocInfo {
             doc_id: row.doc_id,
             feed_id: row.feed_id,

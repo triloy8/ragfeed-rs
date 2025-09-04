@@ -2,8 +2,8 @@ use anyhow::{bail, Result};
 use sqlx::PgPool;
 
 use crate::encoder::E5Encoder;
-use crate::out::{self};
-use crate::out::embed::Phase as EmbedPhase;
+use crate::telemetry::{self};
+use crate::telemetry::ops::embed::Phase as EmbedPhase;
 
 use super::db;
 
@@ -15,7 +15,7 @@ pub async fn embed_force_once(
     batch: usize,
     max: Option<i64>,
 ) -> Result<i64> {
-    let log = out::embed();
+    let log = telemetry::embed();
     let rows = { let _fb = log.span(&EmbedPhase::FetchBatch).entered(); db::fetch_all_chunks(pool, max).await? };
     if rows.is_empty() { return Ok(0); }
 
@@ -52,7 +52,7 @@ pub async fn embed_missing_paged(
     batch: usize,
     max: Option<i64>,
 ) -> Result<i64> {
-    let log = out::embed();
+    let log = telemetry::embed();
     let mut total = 0i64;
     let mut remaining = max.unwrap_or(i64::MAX);
     loop {
@@ -85,4 +85,3 @@ pub async fn embed_missing_paged(
     }
     Ok(total)
 }
-

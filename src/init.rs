@@ -3,8 +3,8 @@ use clap::Args;
 use serde::Serialize;
 use sqlx::PgPool;
 
-use crate::out::{self};
-use crate::out::init::Phase as InitPhase;
+use crate::telemetry::{self};
+use crate::telemetry::ops::init::Phase as InitPhase;
 
 #[derive(Args)]
 pub struct InitCmd {
@@ -13,11 +13,11 @@ pub struct InitCmd {
 }
 
 pub async fn run(pool: &PgPool, args: InitCmd) -> Result<()> {
-    let log = out::init();
+    let log = telemetry::init();
     let _g = log.root_span_kv([("apply", args.apply.to_string())]).entered();
 
     if !args.apply {
-        if out::json_mode() {
+        if telemetry::config::json_mode() {
             #[derive(Serialize)]
             struct InitPlan { actions: Vec<&'static str> }
             let plan = InitPlan { actions: vec!["migrate ./migrations"] };
@@ -32,7 +32,7 @@ pub async fn run(pool: &PgPool, args: InitCmd) -> Result<()> {
 
     let _s = log.span(&InitPhase::Migrate).entered();
     sqlx::migrate!("./migrations").run(pool).await?;
-    if out::json_mode() {
+    if telemetry::config::json_mode() {
         #[derive(Serialize)]
         struct InitResult { migrated: bool }
         log.result(&InitResult { migrated: true })?;

@@ -1,7 +1,7 @@
 use anyhow::Result;
 use sqlx::PgPool;
 
-use crate::out;
+use crate::telemetry;
 use crate::util::sql::paged_loop;
 
 pub async fn delete_orphan_embeddings(pool: &PgPool, max: i64) -> Result<()> {
@@ -25,7 +25,7 @@ pub async fn delete_orphan_embeddings(pool: &PgPool, max: i64) -> Result<()> {
         },
         max,
         |n| {
-            let log = out::gc();
+            let log = telemetry::gc();
             log.info(format!("  🗑️ Deleted {} orphan embeddings", n));
         },
     )
@@ -53,7 +53,7 @@ pub async fn delete_orphan_chunks(pool: &PgPool, feed: Option<i32>, max: i64) ->
                 .bind(limit)
             },
             max,
-            |n| { let log = out::gc(); log.info(format!("  🗑️ Deleted {} orphan chunks", n)); },
+            |n| { let log = telemetry::gc(); log.info(format!("  🗑️ Deleted {} orphan chunks", n)); },
         )
         .await,
         Some(fid) => paged_loop(
@@ -78,7 +78,7 @@ pub async fn delete_orphan_chunks(pool: &PgPool, feed: Option<i32>, max: i64) ->
                 .bind(limit)
             },
             max,
-            |n| { let log = out::gc(); log.info(format!("  🗑️ Deleted {} orphan chunks", n)); },
+            |n| { let log = telemetry::gc(); log.info(format!("  🗑️ Deleted {} orphan chunks", n)); },
         )
         .await,
     }
@@ -105,7 +105,7 @@ pub async fn delete_error_docs(pool: &PgPool, cutoff: Option<DateTime<Utc>>, fee
                 .bind(limit)
             },
             max,
-            |n| { let log = out::gc(); log.info(format!("  🗑️ Deleted {} error docs", n)); },
+            |n| { let log = telemetry::gc(); log.info(format!("  🗑️ Deleted {} error docs", n)); },
         )
         .await,
         (Some(ts), Some(fid)) => paged_loop(
@@ -126,7 +126,7 @@ pub async fn delete_error_docs(pool: &PgPool, cutoff: Option<DateTime<Utc>>, fee
                 .bind(limit)
             },
             max,
-            |n| { let log = out::gc(); log.info(format!("  🗑️ Deleted {} error docs", n)); },
+            |n| { let log = telemetry::gc(); log.info(format!("  🗑️ Deleted {} error docs", n)); },
         )
         .await,
         (None, None) => paged_loop(
@@ -145,7 +145,7 @@ pub async fn delete_error_docs(pool: &PgPool, cutoff: Option<DateTime<Utc>>, fee
                 .bind(limit)
             },
             max,
-            |n| { let log = out::gc(); log.info(format!("  🗑️ Deleted {} error docs", n)); },
+            |n| { let log = telemetry::gc(); log.info(format!("  🗑️ Deleted {} error docs", n)); },
         )
         .await,
         (None, Some(fid)) => paged_loop(
@@ -165,7 +165,7 @@ pub async fn delete_error_docs(pool: &PgPool, cutoff: Option<DateTime<Utc>>, fee
                 .bind(limit)
             },
             max,
-            |n| { let log = out::gc(); log.info(format!("  🗑️ Deleted {} error docs", n)); },
+            |n| { let log = telemetry::gc(); log.info(format!("  🗑️ Deleted {} error docs", n)); },
         )
         .await,
     }
@@ -191,7 +191,7 @@ pub async fn delete_never_chunked_docs(pool: &PgPool, cutoff: Option<DateTime<Ut
                 .bind(limit)
             },
             max,
-            |n| { let log = out::gc(); log.info(format!("  🗑️ Deleted {} never-chunked docs", n)); },
+            |n| { let log = telemetry::gc(); log.info(format!("  🗑️ Deleted {} never-chunked docs", n)); },
         )
         .await,
         (Some(ts), Some(fid)) => paged_loop(
@@ -213,7 +213,7 @@ pub async fn delete_never_chunked_docs(pool: &PgPool, cutoff: Option<DateTime<Ut
                 .bind(limit)
             },
             max,
-            |n| { let log = out::gc(); log.info(format!("  🗑️ Deleted {} never-chunked docs", n)); },
+            |n| { let log = telemetry::gc(); log.info(format!("  🗑️ Deleted {} never-chunked docs", n)); },
         )
         .await,
         (None, None) => paged_loop(
@@ -233,7 +233,7 @@ pub async fn delete_never_chunked_docs(pool: &PgPool, cutoff: Option<DateTime<Ut
                 .bind(limit)
             },
             max,
-            |n| { let log = out::gc(); log.info(format!("  🗑️ Deleted {} never-chunked docs", n)); },
+            |n| { let log = telemetry::gc(); log.info(format!("  🗑️ Deleted {} never-chunked docs", n)); },
         )
         .await,
         (None, Some(fid)) => paged_loop(
@@ -254,7 +254,7 @@ pub async fn delete_never_chunked_docs(pool: &PgPool, cutoff: Option<DateTime<Ut
                 .bind(limit)
             },
             max,
-            |n| { let log = out::gc(); log.info(format!("  🗑️ Deleted {} never-chunked docs", n)); },
+            |n| { let log = telemetry::gc(); log.info(format!("  🗑️ Deleted {} never-chunked docs", n)); },
         )
         .await,
     }
@@ -278,7 +278,7 @@ pub async fn delete_bad_chunks(pool: &PgPool, feed: Option<i32>, max: i64) -> Re
                 .bind(limit)
             },
             max,
-            |n| { let log = out::gc(); log.info(format!("  🗑️ Deleted {} bad chunks", n)); },
+            |n| { let log = telemetry::gc(); log.info(format!("  🗑️ Deleted {} bad chunks", n)); },
         )
         .await,
         Some(fid) => paged_loop(
@@ -300,7 +300,7 @@ pub async fn delete_bad_chunks(pool: &PgPool, feed: Option<i32>, max: i64) -> Re
                 .bind(limit)
             },
             max,
-            |n| { let log = out::gc(); log.info(format!("  🗑️ Deleted {} bad chunks", n)); },
+            |n| { let log = telemetry::gc(); log.info(format!("  🗑️ Deleted {} bad chunks", n)); },
         )
         .await,
     }

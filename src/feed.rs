@@ -3,8 +3,8 @@ use clap::{Args, Subcommand};
 use serde::Serialize;
 use sqlx::PgPool;
 
-use crate::out::{self};
-use crate::out::feed::Phase as FeedPhase;
+use crate::telemetry::{self};
+use crate::telemetry::ops::feed::Phase as FeedPhase;
 
 /// rag feed add/ls
 #[derive(Args)]
@@ -33,7 +33,7 @@ pub enum FeedSub {
 }
 
 pub async fn run(pool: &PgPool, args: FeedCmd) -> Result<()> {
-    let log = out::feed();
+    let log = telemetry::feed();
     let _g = log.root_span().entered();
     match args.cmd {
         FeedSub::Add { url, name, active, apply } => add_feed(pool, url, name, active, apply).await?,
@@ -43,7 +43,7 @@ pub async fn run(pool: &PgPool, args: FeedCmd) -> Result<()> {
 }
 
 async fn add_feed(pool: &PgPool, url: String, name: Option<String>, active: bool, apply: bool) -> Result<()> {
-    let log = out::feed();
+    let log = telemetry::feed();
     let _g = log.root_span_kv([
         ("mode", if apply { "apply".to_string() } else { "plan".to_string() }),
         ("url", url.clone()),
@@ -52,7 +52,7 @@ async fn add_feed(pool: &PgPool, url: String, name: Option<String>, active: bool
     ]).entered();
 
     if !apply {
-        if out::json_mode() {
+        if telemetry::config::json_mode() {
             #[derive(Serialize)]
             struct FeedAddPlan { action: &'static str, url: String, name: Option<String>, active: bool }
             let plan = FeedAddPlan { action: "add", url: url.clone(), name: name.clone(), active };
@@ -77,7 +77,7 @@ async fn add_feed(pool: &PgPool, url: String, name: Option<String>, active: bool
     )
     .execute(pool)
     .await?;
-    if out::json_mode() {
+    if telemetry::config::json_mode() {
         #[derive(Serialize)]
         struct FeedAddResult { added: bool, url: String }
         log.result(&FeedAddResult { added: true, url })?;
@@ -88,7 +88,7 @@ async fn add_feed(pool: &PgPool, url: String, name: Option<String>, active: bool
 }
 
 async fn ls_feeds(pool: &PgPool, active_only: bool) -> Result<()> {
-    let log = out::feed();
+    let log = telemetry::feed();
     let _g = log.root_span_kv([("active_only", active_only.to_string())]).entered();
     let _s = log.span(&FeedPhase::List).entered();
     let rows = sqlx::query!(
@@ -102,7 +102,7 @@ async fn ls_feeds(pool: &PgPool, active_only: bool) -> Result<()> {
     )
     .fetch_all(pool)
     .await?;
-    if out::json_mode() {
+    if telemetry::config::json_mode() {
         #[derive(Serialize)]
         struct FeedRow { feed_id: i32, url: String, name: Option<String>, is_active: Option<bool>, added_at: Option<chrono::DateTime<chrono::Utc>> }
         #[derive(Serialize)]

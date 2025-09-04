@@ -1,7 +1,7 @@
 use anyhow::Result;
 use sqlx::PgPool;
 
-use crate::out;
+use crate::telemetry;
 
 pub async fn fix_statuses(pool: &PgPool, feed: Option<i32>) -> Result<()> {
     // embedded
@@ -37,7 +37,7 @@ pub async fn fix_statuses(pool: &PgPool, feed: Option<i32>) -> Result<()> {
         .execute(pool)
         .await?,
     };
-    let log = out::gc();
+    let log = telemetry::gc();
     log.info(format!("✅ Set status=embedded on {} doc(s)", res.rows_affected()));
 
     // chunked
@@ -73,7 +73,7 @@ pub async fn fix_statuses(pool: &PgPool, feed: Option<i32>) -> Result<()> {
         .execute(pool)
         .await?,
     };
-    let log = out::gc();
+    let log = telemetry::gc();
     log.info(format!("✅ Set status=chunked on {} doc(s)", res.rows_affected()));
 
     // ingest
@@ -99,9 +99,8 @@ pub async fn fix_statuses(pool: &PgPool, feed: Option<i32>) -> Result<()> {
         .execute(pool)
         .await?,
     };
-    let log = out::gc();
+    let log = telemetry::gc();
     log.info(format!("✅ Set status=ingest on {} doc(s)", res.rows_affected()));
 
     Ok(())
 }
-

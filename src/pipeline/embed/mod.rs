@@ -4,8 +4,8 @@ use serde::Serialize;
 use sqlx::PgPool;
 
 use crate::encoder::{Device, E5Encoder};
-use crate::out::{self};
-use crate::out::embed::Phase as EmbedPhase;
+use crate::telemetry::{self};
+use crate::telemetry::ops::embed::Phase as EmbedPhase;
 
 mod db;
 mod r#loop;
@@ -24,7 +24,7 @@ pub struct EmbedCmd {
 }
 
 pub async fn run(pool: &PgPool, args: EmbedCmd) -> Result<()> {
-    let log = out::embed();
+    let log = telemetry::embed();
     let _g = log
         .root_span_kv([
             ("model_id", args.model_id.clone()),
@@ -53,7 +53,7 @@ pub async fn run(pool: &PgPool, args: EmbedCmd) -> Result<()> {
         let total_candidates = { let _s = log.span(&EmbedPhase::CountCandidates).entered(); db::count_candidates(pool, &model_tag, args.force).await? };
         let planned = match args.max { Some(m) => total_candidates.min(m), None => total_candidates };
         let ids = db::list_candidate_chunk_ids(pool, &model_tag, args.force, args.plan_limit as i64).await?;
-        if out::json_mode() {
+        if telemetry::config::json_mode() {
             #[derive(Serialize)]
             struct EmbedPlan { model: String, dim: usize, batch: usize, force: bool, candidates: i64, planned: i64, sample_chunk_ids: Vec<i64> }
             let plan = EmbedPlan { model: model_tag.clone(), dim: args.dim, batch, force: args.force, candidates: total_candidates, planned, sample_chunk_ids: ids };
@@ -85,7 +85,7 @@ pub async fn run(pool: &PgPool, args: EmbedCmd) -> Result<()> {
         log.info(format!("ℹ️  No chunks to embed (force={} model={})", args.force, model_tag));
     }
 
-    if out::json_mode() {
+    if telemetry::config::json_mode() {
         #[derive(Serialize)]
         struct EmbedResult { total_embedded: i64 }
         log.result(&EmbedResult { total_embedded: total })?;
@@ -93,4 +93,3 @@ pub async fn run(pool: &PgPool, args: EmbedCmd) -> Result<()> {
 
     Ok(())
 }
-

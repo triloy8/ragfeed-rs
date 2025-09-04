@@ -6,8 +6,8 @@ use reqwest::Client;
 use chrono::{DateTime, Utc};
 use url::Url;
 
-use crate::out::{self};
-use crate::out::ingest::Phase as IngestPhase;
+use crate::telemetry::{self};
+use crate::telemetry::ops::ingest::Phase as IngestPhase;
 
 mod fetch;
 mod parse;
@@ -25,7 +25,7 @@ pub struct IngestCmd {
 }
 
 pub async fn run(pool: &PgPool, args: IngestCmd) -> Result<()> {
-    let log = out::ingest();
+    let log = telemetry::ingest();
     let _g = log.root_span_kv([
         ("apply", args.apply.to_string()),
         ("limit", (args.limit as i64).to_string()),
@@ -54,7 +54,7 @@ pub async fn run(pool: &PgPool, args: IngestCmd) -> Result<()> {
 
     if !args.apply {
         let mode = if args.force_refetch { "upsert" } else { "insert-only" };
-        if out::json_mode() {
+        if telemetry::config::json_mode() {
             #[derive(Serialize)]
             struct FeedSample { feed_id: i32, url: String, name: Option<String> }
             #[derive(Serialize)]
@@ -137,7 +137,7 @@ pub async fn run(pool: &PgPool, args: IngestCmd) -> Result<()> {
 
     log.totals(total_inserted, total_updated, total_skipped, total_errors);
 
-    if out::json_mode() {
+    if telemetry::config::json_mode() {
         #[derive(Serialize)]
         struct IngestTotals { inserted: usize, updated: usize, skipped: usize, errors: usize }
         #[derive(Serialize)]
@@ -150,4 +150,3 @@ pub async fn run(pool: &PgPool, args: IngestCmd) -> Result<()> {
     }
     Ok(())
 }
-
