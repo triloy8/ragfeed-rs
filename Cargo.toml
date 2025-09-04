@@ -33,3 +33,4 @@ sqlx-migrate = "0.7"
 default = []
 # cuda support w/ --features cuda
 cuda = ["ort/cuda"]
+gpt2-tokenizer = []
