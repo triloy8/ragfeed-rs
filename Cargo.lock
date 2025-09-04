@@ -2493,6 +2493,7 @@ name = "rss-feeder"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "chrono",
  "clap",
  "dotenvy",

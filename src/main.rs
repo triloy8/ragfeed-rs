@@ -9,9 +9,8 @@ mod out;
 
 mod init;
 mod feed;
-mod ingest;
+mod ingestion;
 mod tokenizer;
-mod extractor;
 mod encoder;
 mod stats;
 mod reindex;
@@ -38,7 +37,7 @@ struct Cli {
 enum Commands {
     Init(init::InitCmd),
     Feed(feed::FeedCmd),
-    Ingest(ingest::IngestCmd),
+    Ingest(ingestion::IngestCmd),
     Chunk(pipeline::chunk::ChunkCmd),
     Embed(pipeline::embed::EmbedCmd),
     Stats(stats::StatsCmd),
@@ -66,7 +65,7 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Init(args) => init::run(&pool, args).await?,
         Commands::Feed(args) => feed::run(&pool, args).await?,
-        Commands::Ingest(args) => ingest::run(&pool, args).await?,
+        Commands::Ingest(args) => ingestion::run(&pool, args).await?,
         Commands::Chunk(args) => pipeline::chunk::run(&pool, args).await?,
         Commands::Embed(args) => pipeline::embed::run(&pool, args).await?,
         Commands::Stats(args) => stats::run(&pool, args).await?,

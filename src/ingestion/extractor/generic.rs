@@ -1,13 +1,6 @@
 use scraper::{Html, Selector};
 
-pub fn extract(host: &str, html: &str) -> Option<String> {
-    match host {
-        // add site-specific handlers
-        _ => scrape_generic(html),
-    }
-}
-
-fn scrape_generic(html: &str) -> Option<String> {
+pub fn scrape_generic(html: &str) -> Option<String> {
     let doc = Html::parse_document(html);
 
     // try a set of likely article containers first
