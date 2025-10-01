@@ -140,6 +140,38 @@ rag gc --feed 1 --fix-status --vacuum analyze --apply
 - `rag reindex [--lists <k>] [--apply]` — create/reindex/swap ivfflat index
 - `rag gc [--older-than <win|date>] [--feed <id>] [--max <n>] [--vacuum analyze|full|off] [--fix-status] [--drop-temp-indexes] [--apply]` — cleanup
 
+## Data Flow & Cascades (Summary)
+
+- Foreign keys and cascades
+  - `rag.chunk.doc_id → rag.document.doc_id ON DELETE CASCADE`
+  - `rag.embedding.chunk_id → rag.chunk.chunk_id ON DELETE CASCADE`
+  - Deleting a document deletes its chunks, which deletes their embeddings. Deleting a chunk deletes its embedding.
+
+- Ingestion (documents)
+  - Insert‑only: ignores conflicts by `source_url` (no updates).
+  - Upsert: on conflict by `source_url`, updates title/published_at/fetched_at/content_hash/raw_html/text_clean/status/error_msg; does not touch chunks/embeddings.
+
+- Chunking (replace strategy)
+  - For each doc: delete all existing chunks, then insert new chunks `(doc_id, chunk_index)`; set document `status='chunked'`.
+  - Deleting chunks cascades to delete their embeddings.
+  - Edge case: if tokenization yields zero tokens, status is set to `chunked` without deleting existing chunks.
+
+- Embeddings (single row per chunk)
+  - Schema has one embedding per chunk (PK on `chunk_id`).
+  - Upsert overwrites existing row (model, dim, vec). Running a different model later replaces the previous one.
+  - Planning can list “missing by model”, but writes still keep only one row per chunk.
+
+- GC (cleanup)
+  - Deletes orphan embeddings (no chunk), orphan chunks (no document), stale error docs, never‑chunked old docs, and bad chunks. Cascades ensure child rows are removed.
+
+- Reindex/Query
+  - Reindex modifies ivfflat index only. Query is read‑only.
+
+Practical implications
+- Re‑chunking invalidates embeddings for a document via cascade; re‑run `rag embed` after chunking.
+- Alternating between models in `rag embed` will overwrite vectors due to single‑row design per chunk.
+- For multi‑model support, change embeddings to PK `(chunk_id, model)` and update queries accordingly.
+
 ## Embedding Models
 
 - Default: `intfloat/e5-small-v2` (384‑dim). The encoder downloads tokenizer and ONNX model from the Hugging Face Hub.
