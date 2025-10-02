@@ -38,6 +38,23 @@ Build notes (sqlx):
   ```
   Requires a compatible CUDA setup. The binary includes ONNX Runtime via the `ort` crate.
 
+## Task Runner (just)
+
+Use `just` to run common tasks (loads variables from `.env`).
+
+- Install: `cargo install just` (or use your package manager)
+- List tasks: `just` (or `just help`)
+- Start DB: `just db-up`
+- Tail logs: `just db-logs`
+- Open psql: `just psql`
+- Stop DB: `just db-down`
+
+Migrations with sqlx-cli (install once: `cargo install sqlx-cli`)
+- Run migrations: `just migrate`
+- Show status: `just migrate-info`
+- Revert last: `just migrate-revert`
+- Reset DB (wipe volume): `just db-reset`
+
 ## Configuration
 
 - `DATABASE_URL` — Postgres DSN (e.g., `postgres://user:pass@host:5432/db`)
@@ -54,13 +71,17 @@ JSON mode:
 
 1) Initialize schema and indexes
 ```bash
-rag init --apply --dsn "$DATABASE_URL"
+# Start the database
+just db-up
+
+# Run migrations with sqlx-cli (install once: `cargo install sqlx-cli`)
+just migrate
 ```
-If your DB is fresh, also ensure:
-```sql
-CREATE SCHEMA IF NOT EXISTS rag;
-CREATE EXTENSION IF NOT EXISTS vector;
-```
+Notes:
+- The container's init script creates the `vector` extension and `rag` schema on first start.
+- If targeting an external DB, ensure once:
+  - `CREATE EXTENSION IF NOT EXISTS vector;`
+  - `CREATE SCHEMA IF NOT EXISTS rag;`
 
 2) Add a feed (plan first, then apply)
 ```bash
@@ -186,7 +207,8 @@ Practical implications
 ## Troubleshooting
 
 - Build fails with sqlx macro errors:
-  - Ensure `DATABASE_URL` points to a reachable DB during `cargo build`, or switch to sqlx offline with a generated `sqlx-data.json`.
+  - SQLx validates queries at compile time. Bootstrap the schema first with `just migrate` so tables exist, or use SQLX offline with a generated `sqlx-data.json`.
+  - To prepare offline data: `cargo install sqlx-cli && DATABASE_URL=... cargo sqlx prepare`.
 - `No embeddings found. Run rag embed first.`
   - Create embeddings after chunking: `rag embed --apply`.
 - Embedding dim mismatch (e.g., model produced 768 but `--dim 384`):
