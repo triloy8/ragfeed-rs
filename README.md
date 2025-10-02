@@ -151,7 +151,7 @@ rag gc --feed 1 --fix-status --vacuum analyze --apply
 ## Command Reference
 
 - `rag feed add <url> [--name <str>] [--active <bool>] [--apply]` — upsert a feed
-- `rag feed ls [--active-only]` — list feeds
+- `rag feed ls [--active <bool>]` — list feeds (omit to show all)
 - `rag ingest [--feed <id>] [--feed-url <url>] [--limit <n>] [--force-refetch] [--apply]` — fetch RSS, pull pages, extract text, write `rag.document`
 - `rag chunk [--since <win|date>] [--doc-id <id>] [--tokens-target <n>] [--overlap <n>] [--max-chunks-per-doc <n>] [--force] [--apply]` — produce `rag.chunk`
 - `rag embed [--model-id <id>] [--onnx-filename <path>] [--device cpu|cuda] [--dim <n>] [--batch <n>] [--max <n>] [--force] [--apply]` — write `rag.embedding`
