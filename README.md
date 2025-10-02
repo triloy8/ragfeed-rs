@@ -150,7 +150,6 @@ rag gc --feed 1 --fix-status --vacuum analyze --apply
 
 ## Command Reference
 
-- `rag init [--apply]` — runs SQL migrations (plan by default)
 - `rag feed add <url> [--name <str>] [--active <bool>] [--apply]` — upsert a feed
 - `rag feed ls [--active-only]` — list feeds
 - `rag ingest [--feed <id>] [--feed-url <url>] [--limit <n>] [--force-refetch] [--apply]` — fetch RSS, pull pages, extract text, write `rag.document`
@@ -160,6 +159,9 @@ rag gc --feed 1 --fix-status --vacuum analyze --apply
 - `rag stats [--feed <id>] [--doc <id>] [--chunk <id>]` — operational views
 - `rag reindex [--lists <k>] [--apply]` — create/reindex/swap ivfflat index
 - `rag gc [--older-than <win|date>] [--feed <id>] [--max <n>] [--vacuum analyze|full|off] [--fix-status] [--drop-temp-indexes] [--apply]` — cleanup
+
+Migrations
+- Use `just migrate` (with `sqlx-cli`) for database migrations. See the “Task Runner (just)” section.
 
 ## Data Flow & Cascades (Summary)
 

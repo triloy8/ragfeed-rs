@@ -6,7 +6,7 @@ use std::env;
 use std::time::Instant;
 
 
-mod init;
+// mod init; // removed (hard removal of `init` subcommand)
 mod feed;
 mod ingestion;
 mod tokenizer;
@@ -33,7 +33,6 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    Init(init::InitCmd),
     Feed(feed::FeedCmd),
     Ingest(ingestion::IngestCmd),
     Chunk(pipeline::chunk::ChunkCmd),
@@ -61,7 +60,6 @@ async fn main() -> Result<()> {
     let pool = PgPool::connect(&dsn).await?;
 
     match cli.command {
-        Commands::Init(args) => init::run(&pool, args).await?,
         Commands::Feed(args) => feed::run(&pool, args).await?,
         Commands::Ingest(args) => ingestion::run(&pool, args).await?,
         Commands::Chunk(args) => pipeline::chunk::run(&pool, args).await?,
