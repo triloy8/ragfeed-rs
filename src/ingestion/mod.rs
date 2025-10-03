@@ -13,6 +13,7 @@ mod fetch;
 mod parse;
 mod write;
 mod types;
+mod db;
 pub mod extractor;
 
 #[derive(Args)]
@@ -37,21 +38,7 @@ pub async fn run(pool: &PgPool, args: IngestCmd) -> Result<()> {
     ]).entered();
 
     // resolve feeds to process
-    let feeds = sqlx::query!(
-        r#"
-        SELECT feed_id, url, name
-        FROM rag.feed
-        WHERE
-          ($1::INT4 IS NULL OR feed_id = $1::INT4) AND
-          ($2::TEXT IS NULL OR url     = $2::TEXT) AND
-          ($1::INT4 IS NOT NULL OR $2::TEXT IS NOT NULL OR is_active = TRUE)
-        ORDER BY feed_id
-        "#,
-        args.feed,
-        args.feed_url.as_deref()
-    )
-    .fetch_all(pool)
-    .await?;
+    let feeds = db::select_feeds(pool, args.feed, args.feed_url.as_deref()).await?;
 
     if !args.apply {
         let mode = if args.force_refetch { "upsert" } else { "insert-only" };

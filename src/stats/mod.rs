@@ -7,6 +7,7 @@ pub mod feed;
 pub mod doc;
 pub mod chunk;
 pub mod types;
+pub mod db;
 
 #[derive(Args, Debug)]
 pub struct StatsCmd {
@@ -29,4 +30,3 @@ pub async fn run(pool: &PgPool, args: StatsCmd) -> Result<()> {
     if let Some(feed_id) = args.feed { return feed::feed_stats(pool, feed_id, args.doc_limit).await; }
     summary::summary(pool).await
 }
-

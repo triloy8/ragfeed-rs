@@ -1,5 +1,6 @@
 pub mod select;
 pub mod logic;
+mod db;
 
 use anyhow::{Context, Result};
 use clap::Args;
@@ -100,8 +101,7 @@ pub async fn run(pool: &PgPool, args: ChunkCmd) -> Result<()> {
 
         if ids.is_empty() {
             let _us = log.span(&ChunkPhase::UpdateStatus).entered();
-            sqlx::query!("UPDATE rag.document SET status='chunked' WHERE doc_id=$1", doc_id)
-                .execute(pool).await?;
+            db::mark_chunked(pool, doc_id).await?;
             drop(_us);
             log.info(format!("✅ doc_id={} → 0 chunks (no tokens)", doc_id));
             per_doc.push(DocResult { doc_id, inserted: 0 });
@@ -111,8 +111,7 @@ pub async fn run(pool: &PgPool, args: ChunkCmd) -> Result<()> {
         let slices = chunk_token_ids(&ids, args.tokens_target, args.overlap, args.max_chunks_per_doc);
 
         let _ic = log.span(&ChunkPhase::InsertChunk).entered();
-        sqlx::query!("DELETE FROM rag.chunk WHERE doc_id = $1", doc_id)
-            .execute(pool).await?;
+        db::delete_chunks(pool, doc_id).await?;
 
         let mut inserted = 0usize;
         for (i, id_slice) in slices.into_iter().enumerate() {
@@ -122,21 +121,7 @@ pub async fn run(pool: &PgPool, args: ChunkCmd) -> Result<()> {
 
             let token_count = id_slice.len() as i32;
 
-            sqlx::query!(
-                r#"
-                INSERT INTO rag.chunk (doc_id, chunk_index, text, token_count, md5)
-                VALUES ($1, $2, $3, $4, md5($3))
-                ON CONFLICT (doc_id, chunk_index) DO UPDATE
-                  SET text = EXCLUDED.text,
-                      token_count = EXCLUDED.token_count,
-                      md5 = EXCLUDED.md5
-                "#,
-                doc_id,
-                i as i32,
-                chunk_text,
-                token_count
-            )
-            .execute(pool).await?;
+            let _ = db::insert_chunk(pool, doc_id, i as i32, &chunk_text, token_count).await?;
 
             inserted += 1;
         }
@@ -144,8 +129,7 @@ pub async fn run(pool: &PgPool, args: ChunkCmd) -> Result<()> {
 
         if inserted > 0 {
             let _us = log.span(&ChunkPhase::UpdateStatus).entered();
-            sqlx::query!("UPDATE rag.document SET status='chunked' WHERE doc_id=$1", doc_id)
-                .execute(pool).await?;
+            db::mark_chunked(pool, doc_id).await?;
             drop(_us);
         }
 

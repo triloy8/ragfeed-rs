@@ -4,50 +4,27 @@ use sqlx::PgPool;
 use crate::telemetry::{self};
 use crate::telemetry::ops::stats::Phase as StatsPhase;
 use crate::stats::types::*;
+use crate::stats::db;
 
 pub async fn snapshot_doc(pool: &PgPool, id: i64, chunk_limit: i64) -> Result<()> {
     let log = telemetry::stats();
     let _s = log.span(&StatsPhase::DocSnapshot).entered();
-    let row = sqlx::query!(
-        r#"
-        SELECT doc_id, feed_id, source_url, source_title, published_at,
-               fetched_at, status, error_msg,
-               substring(text_clean, 1, 400) AS preview
-        FROM rag.document
-        WHERE doc_id = $1
-        "#,
-        id
-    )
-    .fetch_one(pool)
-    .await?;
+    let snap = db::doc_snapshot(pool, id, chunk_limit).await?;
 
-    log.info(format!("📄 Document {}:", row.doc_id));
-    log.info(format!("  Feed ID: {:?}", row.feed_id));
-    log.info(format!("  URL: {}", row.source_url));
-    log.info(format!("  Title: {:?}", row.source_title));
-    log.info(format!("  Published: {:?}", row.published_at));
-    log.info(format!("  Fetched: {:?}", row.fetched_at));
-    log.info(format!("  Status: {:?}", row.status));
-    log.info(format!("  Error: {:?}", row.error_msg));
-    log.info(format!("  Preview: {:?}", row.preview));
+    log.info(format!("📄 Document {}:", snap.doc.doc_id));
+    log.info(format!("  Feed ID: {:?}", snap.doc.feed_id));
+    log.info(format!("  URL: {}", snap.doc.source_url));
+    log.info(format!("  Title: {:?}", snap.doc.source_title));
+    log.info(format!("  Published: {:?}", snap.doc.published_at));
+    log.info(format!("  Fetched: {:?}", snap.doc.fetched_at));
+    log.info(format!("  Status: {:?}", snap.doc.status));
+    log.info(format!("  Error: {:?}", snap.doc.error_msg));
+    log.info(format!("  Preview: {:?}", snap.doc.preview));
 
     // list chunks (IDs visible)
-    let rows = sqlx::query!(
-        r#"
-        SELECT chunk_id, chunk_index, token_count
-        FROM rag.chunk
-        WHERE doc_id = $1
-        ORDER BY chunk_index ASC
-        LIMIT $2
-        "#,
-        id,
-        chunk_limit
-    )
-    .fetch_all(pool)
-    .await?;
-    if !rows.is_empty() {
-        log.info(format!("  Chunks (first {}):", rows.len()));
-        for r in &rows {
+    if !snap.chunks.is_empty() {
+        log.info(format!("  Chunks (first {}):", snap.chunks.len()));
+        for r in &snap.chunks {
             log.info(format!(
                 "    chunk_id={}  idx={:?}  tokens={:?}",
                 r.chunk_id, r.chunk_index, r.token_count
@@ -56,24 +33,7 @@ pub async fn snapshot_doc(pool: &PgPool, id: i64, chunk_limit: i64) -> Result<()
     }
 
     // JSON envelope
-    if telemetry::config::json_mode() {
-        let doc = StatsDocInfo {
-            doc_id: row.doc_id,
-            feed_id: row.feed_id,
-            source_url: row.source_url,
-            source_title: row.source_title,
-            published_at: row.published_at,
-            fetched_at: row.fetched_at,
-            status: row.status,
-            error_msg: row.error_msg,
-            preview: row.preview,
-        };
-        let chunks: Vec<StatsDocChunkInfo> = rows
-            .into_iter()
-            .map(|r| StatsDocChunkInfo { chunk_id: r.chunk_id, chunk_index: r.chunk_index, token_count: r.token_count })
-            .collect();
-        log.result(&StatsDocSnapshot { doc, chunks })?;
-    }
+    if telemetry::config::json_mode() { log.result(&snap)?; }
 
     Ok(())
 }

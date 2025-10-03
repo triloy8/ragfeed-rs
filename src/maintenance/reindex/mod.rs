@@ -7,7 +7,7 @@ use crate::telemetry::{self};
 use crate::telemetry::ops::reindex::Phase as ReindexPhase;
 
 mod heuristics;
-mod ops;
+mod db;
 
 #[derive(Args, Debug)]
 pub struct ReindexCmd {
@@ -23,34 +23,39 @@ pub async fn run(pool: &PgPool, args: ReindexCmd) -> Result<()> {
     ]).entered();
 
     // count embeddings to drive heuristic
-    let n = sqlx::query!("SELECT COUNT(*)::bigint AS n FROM rag.embedding")
-        .fetch_one(pool)
-        .await?
-        .n
-        .unwrap_or(0);
+    let n = db::embedding_count(pool).await?;
 
     // discover index existence and current lists from index definition
-    let idx_row = sqlx::query!(
-        r#"
-        SELECT substring(pg_get_indexdef(i.indexrelid) from 'lists = ([0-9]+)') AS lists
-        FROM pg_index i
-        JOIN pg_class c ON c.oid = i.indexrelid
-        JOIN pg_namespace nsp ON nsp.oid = c.relnamespace
-        WHERE nsp.nspname = 'rag' AND c.relname = 'embedding_vec_ivf_idx'
-        "#
-    )
-    .fetch_optional(pool)
-    .await?;
-    let index_exists = idx_row.is_some();
-    let current_lists = idx_row.and_then(|r| r.lists).and_then(|s| s.parse::<i32>().ok());
+    let index_exists = db::index_exists(pool, "embedding_vec_ivf_idx").await?;
+    let current_lists = db::index_lists(pool, "embedding_vec_ivf_idx").await?;
+
+    // if base index is missing, do not create it here — migrations own schema
+    if !index_exists {
+        if !args.apply {
+            let _sp = log.span(&ReindexPhase::Plan).entered();
+            if telemetry::config::json_mode() {
+                #[derive(Serialize)]
+                struct MissingPlan { rows: i64, index: &'static str, message: &'static str }
+                let plan = MissingPlan {
+                    rows: n as i64,
+                    index: "rag.embedding_vec_ivf_idx",
+                    message: "Index missing. Run migrations (just migrate) to create it.",
+                };
+                log.plan(&plan)?;
+            } else {
+                log.info("❌ Index rag.embedding_vec_ivf_idx not found. Run `just migrate` to create it.");
+            }
+            return Ok(());
+        } else {
+            anyhow::bail!("Index rag.embedding_vec_ivf_idx not found. Run migrations (just migrate) to create it.");
+        }
+    }
 
     // choose desired lists
     let desired_lists = args.lists.map(|k| k.max(1)).unwrap_or_else(|| heuristics::heuristic_lists(n as i64));
 
-    // decide action
-    let action = if !index_exists {
-        Action::Create(desired_lists)
-    } else if let Some(k) = current_lists {
+    // decide action (no Create path; only Reindex or Swap)
+    let action = if let Some(k) = current_lists {
         if k == desired_lists { Action::Reindex } else { Action::Swap(desired_lists) }
     } else {
         Action::Reindex
@@ -62,7 +67,7 @@ pub async fn run(pool: &PgPool, args: ReindexCmd) -> Result<()> {
         if telemetry::config::json_mode() {
             #[derive(Serialize)]
             struct ReindexPlan { rows: i64, current_lists: Option<i32>, desired_lists: i32, action: String, analyze: bool }
-            let action_s = match action { Action::Create(_) => "create", Action::Reindex => "reindex", Action::Swap(_) => "swap" };
+            let action_s = match action { Action::Reindex => "reindex", Action::Swap(_) => "swap" };
             let plan = ReindexPlan { rows: n as i64, current_lists, desired_lists, action: action_s.to_string(), analyze: true };
             log.plan(&plan)?;
         } else {
@@ -77,36 +82,29 @@ pub async fn run(pool: &PgPool, args: ReindexCmd) -> Result<()> {
 
     // execute
     match action {
-        Action::Create(k) => {
-            let _s = log.span(&ReindexPhase::CreateIndex).entered();
-            ops::create_new_index(pool, k).await?;
-            sqlx::query("ALTER INDEX rag.embedding_vec_ivf_idx_new RENAME TO embedding_vec_ivf_idx")
-                .execute(pool)
-                .await?;
-        }
         Action::Reindex => {
             let _s = log.span(&ReindexPhase::Reindex).entered();
-            sqlx::query("REINDEX INDEX CONCURRENTLY rag.embedding_vec_ivf_idx")
-                .execute(pool)
-                .await?;
+            let mut conn = pool.acquire().await?;
+            db::set_search_path(conn.as_mut()).await?;
+            db::reindex_index_ex(conn.as_mut(), "embedding_vec_ivf_idx").await?;
         }
         Action::Swap(k) => {
             let _s1 = log.span(&ReindexPhase::CreateIndex).entered();
-            ops::create_new_index(pool, k).await?;
+            let mut conn = pool.acquire().await?;
+            db::set_search_path(conn.as_mut()).await?;
+            db::create_new_index_ex(conn.as_mut(), k).await?;
             drop(_s1);
             let _s2 = log.span(&ReindexPhase::Swap).entered();
-            sqlx::query("DROP INDEX CONCURRENTLY IF EXISTS rag.embedding_vec_ivf_idx")
-                .execute(pool)
-                .await?;
-            sqlx::query("ALTER INDEX rag.embedding_vec_ivf_idx_new RENAME TO embedding_vec_ivf_idx")
-                .execute(pool)
-                .await?;
+            db::drop_index_ex(conn.as_mut(), "embedding_vec_ivf_idx").await?;
+            db::rename_index_ex(conn.as_mut(), "embedding_vec_ivf_idx_new", "embedding_vec_ivf_idx").await?;
         }
     }
 
     // analyze after
     let _a = log.span(&ReindexPhase::Analyze).entered();
-    sqlx::query("ANALYZE rag.embedding").execute(pool).await?;
+    let mut conn = pool.acquire().await?;
+    db::set_search_path(conn.as_mut()).await?;
+    db::analyze_embedding_ex(conn.as_mut()).await?;
     drop(_a);
     log.info("📊 Analyzed rag.embedding");
     log.info("✅ Reindex completed.");
@@ -114,11 +112,11 @@ pub async fn run(pool: &PgPool, args: ReindexCmd) -> Result<()> {
     if telemetry::config::json_mode() {
         #[derive(Serialize)]
         struct ReindexResult { action: String, analyzed: bool, desired_lists: i32, current_lists: Option<i32> }
-        let action_s = match action { Action::Create(_) => "create", Action::Reindex => "reindex", Action::Swap(_) => "swap" };
+        let action_s = match action { Action::Reindex => "reindex", Action::Swap(_) => "swap" };
         log.result(&ReindexResult { action: action_s.to_string(), analyzed: true, desired_lists, current_lists })?;
     }
     Ok(())
 }
 
 #[derive(Debug)]
-enum Action { Create(i32), Reindex, Swap(i32) }
+enum Action { Reindex, Swap(i32) }

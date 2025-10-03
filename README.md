@@ -228,3 +228,9 @@ Practical implications
 ---
 
 Happy hacking! If you want, I can add an example `.env` and a minimal docker‑compose for Postgres + pgvector.
+## Code Structure
+
+- Each module separates database access into a `db.rs` where practical:
+  - `feed/db.rs`, `ingestion/db.rs`, `stats/db.rs`, `pipeline/chunk/db.rs`, `maintenance/reindex/db.rs`.
+  - Orchestration and telemetry stay in `mod.rs` or view files (e.g., `stats/{summary,feed,doc,chunk}.rs`).
+  - Types for JSON envelopes live in `*/types.rs` and are reused across commands.
