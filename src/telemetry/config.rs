@@ -13,16 +13,24 @@ pub fn init_tracing() {
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("info"));
 
-    let fmt_layer = fmt::layer().with_target(false);
     let builder = tracing_subscriber::registry().with(filter);
 
     match std::env::var("RAG_LOG_FORMAT").as_deref() {
         Ok("json") => {
-            let _ = builder.with(fmt_layer.json().flatten_event(true)).try_init();
+            let json_layer = fmt::layer()
+                .with_target(false)
+                .with_writer(std::io::stderr)
+                .json()
+                .flatten_event(true);
+            let _ = builder.with(json_layer).try_init();
         }
         _ => {
             // human-friendly compact text
-            let _ = builder.with(fmt_layer.compact()).try_init();
+            let text_layer = fmt::layer()
+                .with_target(false)
+                .with_writer(std::io::stderr)
+                .compact();
+            let _ = builder.with(text_layer).try_init();
         }
     }
 }
