@@ -60,12 +60,21 @@ Migrations with sqlx-cli (install once: `cargo install sqlx-cli`)
 - `DATABASE_URL` — Postgres DSN (e.g., `postgres://user:pass@host:5432/db`)
 - `RUST_LOG` — e.g., `info`, `debug`, `rag=debug,sqlx=warn`
 - `RAG_LOG_FORMAT` — `json` for structured logs to stderr; default is compact text
+- `RAG_OUTPUT_FORMAT` — `text|json|mcp` for outputs to stdout; default `text`
+- `RAG_OUTPUT_PRETTY` — `true|false` pretty-prints outputs; default `false`
+- `NO_COLOR` — set to disable ANSI colors in text output
 - `HF_HOME` — optional, Hugging Face cache directory
 
 Every command also accepts `--dsn` to override `DATABASE_URL`.
 
-JSON mode:
-- Pass global `--json` to emit a single JSON envelope to stdout (plan/result). Logs go to stderr.
+Outputs vs Logs
+- Outputs (Plan/Result) go to stdout in the selected format (`RAG_OUTPUT_FORMAT`).
+- Logs (operational) go to stderr via `tracing`, shaped by `RAG_LOG_FORMAT` and `RUST_LOG`.
+- Examples:
+  - `RAG_OUTPUT_FORMAT=json rag query 'x' | jq .`
+  - `RAG_OUTPUT_FORMAT=json RAG_LOG_FORMAT=json rag ingest --apply > out.ndjson 2> logs.ndjson`
+  - `RAG_OUTPUT_FORMAT=text RAG_LOG_FORMAT=json rag stats > out.txt 2> logs.ndjson`
+  - More in `docs/20251003T075300_output_examples.md`.
 
 ## Quickstart
 
@@ -201,10 +210,14 @@ Practical implications
 - You can override `--onnx-filename` to point to a specific ONNX file inside the model repo.
 - Device: `--device cpu` (default) or `--device cuda` (requires CUDA build and system drivers).
 
-## Telemetry & JSON
+## Telemetry & Outputs
 
-- Human logs are compact text. Set `RAG_LOG_FORMAT=json` to emit JSON logs to stderr.
-- Add global `--json` to get a single machine‑readable plan/result envelope on stdout; ideal for scripting.
+- Logs go to stderr. Set `RAG_LOG_FORMAT=json` for structured logs; otherwise compact text is used. Control verbosity via `RUST_LOG`.
+- Outputs go to stdout. Select presenter with `RAG_OUTPUT_FORMAT`:
+  - `text` — human headings; with `RAG_OUTPUT_PRETTY=true`, pretty-print payloads.
+  - `json` — NDJSON envelopes per Plan/Result.
+  - `mcp` — NDJSON JSON-RPC notifications (`notifications/plan`, `notifications/result`).
+- Errors: commands exit non-zero on failure; details are logged to stderr. No stdout Error envelope by default.
 
 ## Troubleshooting
 
