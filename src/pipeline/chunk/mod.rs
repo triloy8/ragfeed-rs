@@ -54,6 +54,18 @@ pub async fn run(pool: &PgPool, args: ChunkCmd) -> Result<()> {
     }
 
     if !args.apply {
+        let _sp = log.span(&ChunkPhase::Plan).entered();
+        // Always log plan summary
+        log.info(format!(
+            "📝 Chunk plan — docs={} force={} tokens_target={} overlap={} max_chunks_per_doc={}",
+            docs.len(), args.force, args.tokens_target, args.overlap, args.max_chunks_per_doc
+        ));
+        for (doc_id, _text_clean) in docs.iter().take(args.plan_limit) {
+            log.info(format!("  doc_id={}", doc_id));
+        }
+        if docs.len() > args.plan_limit { log.info(format!("  ... ({} more)", docs.len() - args.plan_limit)); }
+        log.info("   Use --apply to execute.");
+        // Emit structured plan when in JSON mode (stdout)
         if telemetry::config::json_mode() {
             #[derive(Serialize)]
             struct ChunkPlan { docs: usize, force: bool, tokens_target: usize, overlap: usize, max_chunks_per_doc: usize, sample_doc_ids: Vec<i64> }
@@ -67,17 +79,6 @@ pub async fn run(pool: &PgPool, args: ChunkCmd) -> Result<()> {
                 sample_doc_ids,
             };
             log.plan(&plan)?;
-        } else {
-            let _sp = log.span(&ChunkPhase::Plan).entered();
-            log.info(format!(
-                "📝 Chunk plan — docs={} force={} tokens_target={} overlap={} max_chunks_per_doc={}",
-                docs.len(), args.force, args.tokens_target, args.overlap, args.max_chunks_per_doc
-            ));
-            for (doc_id, _text_clean) in docs.iter().take(args.plan_limit) {
-                log.info(format!("  doc_id={}", doc_id));
-            }
-            if docs.len() > args.plan_limit { log.info(format!("  ... ({} more)", docs.len() - args.plan_limit)); }
-            log.info("   Use --apply to execute.");
         }
         return Ok(());
     }

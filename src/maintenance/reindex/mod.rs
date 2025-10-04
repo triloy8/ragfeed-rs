@@ -33,6 +33,9 @@ pub async fn run(pool: &PgPool, args: ReindexCmd) -> Result<()> {
     if !index_exists {
         if !args.apply {
             let _sp = log.span(&ReindexPhase::Plan).entered();
+            // Always log human message
+            log.info("❌ Index rag.embedding_vec_ivf_idx not found. Run `just migrate` to create it.");
+            // Emit structured plan when in JSON mode (stdout)
             if telemetry::config::json_mode() {
                 #[derive(Serialize)]
                 struct MissingPlan { rows: i64, index: &'static str, message: &'static str }
@@ -42,8 +45,6 @@ pub async fn run(pool: &PgPool, args: ReindexCmd) -> Result<()> {
                     message: "Index missing. Run migrations (just migrate) to create it.",
                 };
                 log.plan(&plan)?;
-            } else {
-                log.info("❌ Index rag.embedding_vec_ivf_idx not found. Run `just migrate` to create it.");
             }
             return Ok(());
         } else {
@@ -64,18 +65,19 @@ pub async fn run(pool: &PgPool, args: ReindexCmd) -> Result<()> {
     // plan-only output
     if !args.apply {
         let _sp = log.span(&ReindexPhase::Plan).entered();
+        // Always log plan summary
+        log.info(format!(
+            "📝 Reindex plan — rows={} current_lists={:?} desired_lists={} action={:?} analyze=TRUE",
+            n, current_lists, desired_lists, action
+        ));
+        log.info("   Use --apply to execute.");
+        // Emit structured plan when in JSON mode (stdout)
         if telemetry::config::json_mode() {
             #[derive(Serialize)]
             struct ReindexPlan { rows: i64, current_lists: Option<i32>, desired_lists: i32, action: String, analyze: bool }
             let action_s = match action { Action::Reindex => "reindex", Action::Swap(_) => "swap" };
             let plan = ReindexPlan { rows: n as i64, current_lists, desired_lists, action: action_s.to_string(), analyze: true };
             log.plan(&plan)?;
-        } else {
-            log.info(format!(
-                "📝 Reindex plan — rows={} current_lists={:?} desired_lists={} action={:?} analyze=TRUE",
-                n, current_lists, desired_lists, action
-            ));
-            log.info("   Use --apply to execute.");
         }
         return Ok(());
     }

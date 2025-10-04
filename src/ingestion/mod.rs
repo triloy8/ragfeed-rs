@@ -42,6 +42,12 @@ pub async fn run(pool: &PgPool, args: IngestCmd) -> Result<()> {
 
     if !args.apply {
         let mode = if args.force_refetch { "upsert" } else { "insert-only" };
+        // Always log plan summary
+        log.info(format!("📝 Ingest plan — feeds={} mode={} limit={}", feeds.len(), mode, args.limit));
+        for f in feeds.iter().take(args.plan_limit) { log.info(format!("  feed_id={} url={} name={:?}", f.feed_id, f.url, f.name)); }
+        if feeds.len() > args.plan_limit { log.info(format!("  ... ({} more)", feeds.len() - args.plan_limit)); }
+        log.info("   Use --apply to execute.");
+        // Emit structured plan when in JSON mode (stdout)
         if telemetry::config::json_mode() {
             use types::{FeedSample, IngestPlan};
             let samples: Vec<FeedSample> = feeds.iter().take(args.plan_limit)
@@ -49,11 +55,6 @@ pub async fn run(pool: &PgPool, args: IngestCmd) -> Result<()> {
                 .collect();
             let plan = IngestPlan { feeds: feeds.len(), mode: mode.to_string(), limit: args.limit, sample_feeds: samples };
             log.plan(&plan)?;
-        } else {
-            log.info(format!("📝 Ingest plan — feeds={} mode={} limit={}", feeds.len(), mode, args.limit));
-            for f in feeds.iter().take(args.plan_limit) { log.info(format!("  feed_id={} url={} name={:?}", f.feed_id, f.url, f.name)); }
-            if feeds.len() > args.plan_limit { log.info(format!("  ... ({} more)", feeds.len() - args.plan_limit)); }
-            log.info("   Use --apply to execute.");
         }
         return Ok(());
     }

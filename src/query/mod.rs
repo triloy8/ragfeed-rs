@@ -114,20 +114,19 @@ pub async fn run(pool: &PgPool, args: QueryCmd) -> Result<()> {
 
     // output
     let _out_span = log.span(&QueryPhase::Output).entered();
-    if telemetry::config::json_mode() {
-        log.result(&out_rows)?;
-    } else {
-        log.info("🔍 Results:");
-        for r in &out_rows {
-            log.info(format!(
-                "#{}  dist={:.4}  chunk={} doc={}  {:?}",
-                r.rank, r.distance, r.chunk_id, r.doc_id, r.title
-            ));
-            if args.show_context {
-                if let Some(p) = &r.preview { log.info(format!("  {}", p.replace('\n', " "))); }
-            }
+    // Always log human-readable results
+    log.info("🔍 Results:");
+    for r in &out_rows {
+        log.info(format!(
+            "#{}  dist={:.4}  chunk={} doc={}  {:?}",
+            r.rank, r.distance, r.chunk_id, r.doc_id, r.title
+        ));
+        if args.show_context {
+            if let Some(p) = &r.preview { log.info(format!("  {}", p.replace('\n', " "))); }
         }
     }
+    // Emit structured result when in JSON mode (stdout)
+    if telemetry::config::json_mode() { log.result(&out_rows)?; }
 
     Ok(())
 }

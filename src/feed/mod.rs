@@ -59,23 +59,25 @@ async fn add_feed(pool: &PgPool, url: String, name: Option<String>, active: bool
     if Url::parse(&url).is_err() { bail!("Invalid URL: {}", url); }
 
     if !apply {
+        let _s = log.span(&FeedPhase::Plan).entered();
+        // Always log plan summary
+        log.info(format!("📝 Feed plan — add url={} name={:?} active={}", url, name, active));
+        log.info("   Use --apply to execute.");
+        // Emit structured plan when in JSON mode (stdout)
         if telemetry::config::json_mode() {
             let plan = types::FeedAddPlan { action: "add", url: url.clone(), name: name.clone(), active };
             log.plan(&plan)?;
-        } else {
-            let _s = log.span(&FeedPhase::Plan).entered();
-            log.info(format!("📝 Feed plan — add url={} name={:?} active={}", url, name, active));
-            log.info("   Use --apply to execute.");
         }
         return Ok(());
     }
     let _s = log.span(&FeedPhase::Add).entered();
     let inserted = db::upsert_feed(pool, &url, name.as_deref(), active).await?;
+    // Always log human summary
+    if inserted { log.info("➕ Feed added"); } else { log.info("♻️ Feed updated"); }
+    // Emit structured result when in JSON mode (stdout)
     if telemetry::config::json_mode() {
         let result = types::FeedAddResult { inserted, url };
         log.result(&result)?;
-    } else {
-        if inserted { log.info("➕ Feed added"); } else { log.info("♻️ Feed updated"); }
     }
     Ok(())
 }
@@ -85,17 +87,18 @@ async fn ls_feeds(pool: &PgPool, active: Option<bool>) -> Result<()> {
     let _g = log.root_span_kv([("active", format!("{:?}", active))]).entered();
     let _s = log.span(&FeedPhase::List).entered();
     let feeds = db::list_feeds(pool, active).await?;
+    // Always log listing
+    log.info("📡 Feeds:");
+    for row in &feeds {
+        log.info(format!(
+            "[{}] {} ({:?}) active={:?} added_at={:?}",
+            row.feed_id, row.url, row.name, row.is_active, row.added_at
+        ));
+    }
+    // Emit structured list when in JSON mode (stdout)
     if telemetry::config::json_mode() {
         let list = types::FeedList { feeds };
         log.result(&list)?;
-    } else {
-        log.info("📡 Feeds:");
-        for row in feeds {
-            log.info(format!(
-                "[{}] {} ({:?}) active={:?} added_at={:?}",
-                row.feed_id, row.url, row.name, row.is_active, row.added_at
-            ));
-        }
     }
     Ok(())
 }

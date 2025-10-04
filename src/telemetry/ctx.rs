@@ -31,8 +31,10 @@ impl<O: OpMarker> LogCtx<O> {
         T: IntoIterator<Item = (&'a str, String)>,
     {
         let span = self.root_span();
-        if self.json {
-            let details = kv_to_string(fields);
+        let details = kv_to_string(fields);
+        if details.is_empty() {
+            info!(op = %self.op_name(), "start");
+        } else {
             info!(op = %self.op_name(), details = %details, "start");
         }
         span
@@ -45,9 +47,11 @@ impl<O: OpMarker> LogCtx<O> {
         T: IntoIterator<Item = (&'a str, String)>,
     {
         let span = self.span(ph);
-        if self.json {
-            let details = kv_to_string(fields);
-            if !details.is_empty() { info!(op = %self.op_name(), phase = ph.name(), details = %details, "span_start"); }
+        let details = kv_to_string(fields);
+        if details.is_empty() {
+            info!(op = %self.op_name(), phase = ph.name(), "span_start");
+        } else {
+            info!(op = %self.op_name(), phase = ph.name(), details = %details, "span_start");
         }
         span
     }
@@ -114,4 +118,3 @@ where
     for (k, v) in kv { parts.push(format!("{}={}", k, v)); }
     parts.join(" ")
 }
-

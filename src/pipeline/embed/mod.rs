@@ -54,19 +54,20 @@ pub async fn run(pool: &PgPool, args: EmbedCmd) -> Result<()> {
         let total_candidates = { let _s = log.span(&EmbedPhase::CountCandidates).entered(); db::count_candidates(pool, &model_tag, args.force).await? };
         let planned = match args.max { Some(m) => total_candidates.min(m), None => total_candidates };
         let ids = db::list_candidate_chunk_ids(pool, &model_tag, args.force, args.plan_limit as i64).await?;
+        // Always log plan summary
+        log.info(format!(
+            "📝 Embed plan — model={} dim={} batch={} force={} candidates={} planned={}",
+            model_tag, args.dim, batch, args.force, total_candidates, planned
+        ));
+        for id in &ids { log.info(format!("  chunk_id={}", id)); }
+        if (args.plan_limit as i64) < planned { log.info("  ... (more up to planned count)"); }
+        log.info("   Use --apply to execute.");
+        // Emit structured plan when in JSON mode (stdout)
         if telemetry::config::json_mode() {
             #[derive(Serialize)]
             struct EmbedPlan { model: String, dim: usize, batch: usize, force: bool, candidates: i64, planned: i64, sample_chunk_ids: Vec<i64> }
             let plan = EmbedPlan { model: model_tag.clone(), dim: args.dim, batch, force: args.force, candidates: total_candidates, planned, sample_chunk_ids: ids };
             log.plan(&plan)?;
-        } else {
-            log.info(format!(
-                "📝 Embed plan — model={} dim={} batch={} force={} candidates={} planned={}",
-                model_tag, args.dim, batch, args.force, total_candidates, planned
-            ));
-            for id in &ids { log.info(format!("  chunk_id={}", id)); }
-            if (args.plan_limit as i64) < planned { log.info("  ... (more up to planned count)"); }
-            log.info("   Use --apply to execute.");
         }
         return Ok(());
     }
