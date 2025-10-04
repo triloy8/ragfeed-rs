@@ -219,6 +219,29 @@ Practical implications
   - `mcp` — NDJSON JSON-RPC notifications (`notifications/plan`, `notifications/result`).
 - Errors: commands exit non-zero on failure; details are logged to stderr. No stdout Error envelope by default.
 
+## ANN Internals (pgvector + ivfflat)
+
+- Backend
+  - Uses Postgres + `pgvector` with `ivfflat` over the embedding column and cosine distance (`vector_cosine_ops`).
+  - Index DDL is created/swapped by reindex logic: `src/maintenance/reindex/db.rs`.
+
+- Query Flow
+  - Embed query text with E5 ONNX, then set probes and run ANN SQL:
+    - Encoder and probes application: `src/query/mod.rs`.
+    - Candidate fetch (ANN): `src/query/db.rs` uses `ORDER BY (e.vec <-> $1) ASC LIMIT $N`.
+    - Post-filter/shape results (cap per document, topk): `src/query/post.rs`.
+
+- Tuning Knobs
+  - `lists` (index-time, ivfflat clusters): managed by `rag reindex`; see `src/maintenance/reindex/mod.rs` and `src/maintenance/reindex/db.rs`.
+  - `probes` (query-time, clusters searched): set via `SET LOCAL ivfflat.probes = p`; default heuristic ≈ `lists/10`. Override with `--probes`.
+
+- Filters and Distance
+  - Optional filters on feed and time are applied in SQL while the ANN index drives ordering.
+  - Cosine distance operator `<->` sorts ascending; smaller means closer.
+
+- Maintenance
+  - Reindex command can reindex in place or create a new index with different `lists`, drop old, and rename new. Analyze follows to refresh stats.
+
 ## Troubleshooting
 
 - Build fails with sqlx macro errors:
