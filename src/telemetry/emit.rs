@@ -1,29 +1,26 @@
 use anyhow::Result;
 use serde::Serialize;
-use serde_json::json;
-use std::io::{self, Write};
 
-#[derive(Serialize)]
-pub struct Meta {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub duration_ms: Option<u128>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub run_id: Option<String>,
-}
+use crate::output::config::{OutputConfig, OutputFormat};
+use crate::output::types::Envelope;
+use crate::output::Emitter;
+
+pub type Meta = crate::output::types::Meta;
 
 pub fn print_plan<T: Serialize>(op: &str, plan: &T, meta: Option<Meta>) -> Result<()> {
-    let env = json!({ "op": op, "apply": false, "plan": plan, "meta": meta });
-    let mut out = io::stdout();
-    serde_json::to_writer(&mut out, &env)?;
-    writeln!(&mut out)?;
+    let env = Envelope::plan(op, plan, meta)?;
+    let mut cfg = OutputConfig::from_env();
+    if matches!(cfg.format, OutputFormat::Text) && super::config::json_mode() { cfg.format = OutputFormat::Json; }
+    let emitter = Emitter::from_env(cfg);
+    emitter.emit(&env)?;
     Ok(())
 }
 
 pub fn print_result<T: Serialize>(op: &str, result: &T, meta: Option<Meta>) -> Result<()> {
-    let env = json!({ "op": op, "apply": true, "result": result, "meta": meta });
-    let mut out = io::stdout();
-    serde_json::to_writer(&mut out, &env)?;
-    writeln!(&mut out)?;
+    let env = Envelope::result(op, result, meta)?;
+    let mut cfg = OutputConfig::from_env();
+    if matches!(cfg.format, OutputFormat::Text) && super::config::json_mode() { cfg.format = OutputFormat::Json; }
+    let emitter = Emitter::from_env(cfg);
+    emitter.emit(&env)?;
     Ok(())
 }
-

@@ -11,7 +11,7 @@ pub trait Presenter: Send + Sync {
 pub struct JsonPresenter { pub pretty: bool }
 impl Presenter for JsonPresenter {
     fn emit(&self, env: &Envelope, w: &mut dyn Write) -> io::Result<()> {
-        if self.pretty { serde_json::to_writer_pretty(w, env).map_err(to_io)? } else { serde_json::to_writer(w, env).map_err(to_io)? }
+        if self.pretty { serde_json::to_writer_pretty(&mut *w, env).map_err(to_io)? } else { serde_json::to_writer(&mut *w, env).map_err(to_io)? }
         writeln!(w)
     }
 }
@@ -21,14 +21,10 @@ impl Presenter for TextPresenter {
     fn emit(&self, env: &Envelope, w: &mut dyn Write) -> io::Result<()> {
         if env.apply {
             writeln!(w, "Result: {}", env.op)?;
-            if self.pretty {
-                if let Some(res) = &env.result { serde_json::to_writer_pretty(w, res).map_err(to_io)?; writeln!(w)?; }
-            }
+            if self.pretty { if let Some(res) = &env.result { serde_json::to_writer_pretty(&mut *w, res).map_err(to_io)?; writeln!(w)?; } }
         } else {
             writeln!(w, "Plan: {}", env.op)?;
-            if self.pretty {
-                if let Some(plan) = &env.plan { serde_json::to_writer_pretty(w, plan).map_err(to_io)?; writeln!(w)?; }
-            }
+            if self.pretty { if let Some(plan) = &env.plan { serde_json::to_writer_pretty(&mut *w, plan).map_err(to_io)?; writeln!(w)?; } }
         }
         Ok(())
     }
@@ -48,7 +44,7 @@ impl Presenter for McpPresenter {
                     "result": env.result
                 }
             });
-            if self.pretty { serde_json::to_writer_pretty(w, &payload).map_err(to_io)?; } else { serde_json::to_writer(w, &payload).map_err(to_io)?; }
+            if self.pretty { serde_json::to_writer_pretty(&mut *w, &payload).map_err(to_io)?; } else { serde_json::to_writer(&mut *w, &payload).map_err(to_io)?; }
             writeln!(w)
         } else {
             let payload = json!({
@@ -61,7 +57,7 @@ impl Presenter for McpPresenter {
                     "plan": env.plan
                 }
             });
-            if self.pretty { serde_json::to_writer_pretty(w, &payload).map_err(to_io)?; } else { serde_json::to_writer(w, &payload).map_err(to_io)?; }
+            if self.pretty { serde_json::to_writer_pretty(&mut *w, &payload).map_err(to_io)?; } else { serde_json::to_writer(&mut *w, &payload).map_err(to_io)?; }
             writeln!(w)
         }
     }
@@ -89,4 +85,3 @@ impl Emitter {
 }
 
 fn to_io(e: serde_json::Error) -> io::Error { io::Error::new(io::ErrorKind::Other, e) }
-

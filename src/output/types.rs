@@ -18,7 +18,7 @@ pub struct Envelope {
     pub schema_version: &'static str,
     pub time: DateTime<Utc>,
     pub request_id: Uuid,
-    pub op: &'static str,
+    pub op: String,
     pub apply: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plan: Option<Value>,
@@ -29,13 +29,13 @@ pub struct Envelope {
 }
 
 impl Envelope {
-    pub fn plan<T: Serialize>(op: &'static str, plan: &T, meta: Option<Meta>) -> Result<Self, serde_json::Error> {
+    pub fn plan<T: Serialize>(op: impl Into<String>, plan: &T, meta: Option<Meta>) -> Result<Self, serde_json::Error> {
         let plan_val = serde_json::to_value(plan)?;
         Ok(Envelope {
             schema_version: SCHEMA_VERSION,
             time: Utc::now(),
             request_id: Uuid::new_v4(),
-            op,
+            op: op.into(),
             apply: false,
             plan: Some(plan_val),
             result: None,
@@ -43,13 +43,13 @@ impl Envelope {
         })
     }
 
-    pub fn result<T: Serialize>(op: &'static str, result: &T, meta: Option<Meta>) -> Result<Self, serde_json::Error> {
+    pub fn result<T: Serialize>(op: impl Into<String>, result: &T, meta: Option<Meta>) -> Result<Self, serde_json::Error> {
         let res_val = serde_json::to_value(result)?;
         Ok(Envelope {
             schema_version: SCHEMA_VERSION,
             time: Utc::now(),
             request_id: Uuid::new_v4(),
-            op,
+            op: op.into(),
             apply: true,
             plan: None,
             result: Some(res_val),
@@ -83,4 +83,3 @@ mod tests {
         assert!(s.contains("\"apply\":true"));
     }
 }
-
