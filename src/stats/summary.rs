@@ -74,18 +74,16 @@ pub async fn summary(pool: &PgPool) -> Result<()> {
     log.info(format!("📈 Coverage: {}/{} ({:.1}%)", cov.embedded, cov.chunks, cov.pct));
     log.info(format!("   Missing embeddings: {}", cov.missing));
 
-    // JSON envelope
-    if telemetry::config::json_mode() {
-        let feeds_out = feeds;
-        let docs_out = docs;
-        let last_fetched = db::last_fetched(pool).await?;
-        let chunks_out = db::chunks_summary(pool).await?;
-        let embeddings_out = db::embeddings_totals(pool).await?;
-        let index_out = db::index_meta(pool).await?;
-        let coverage_out = db::coverage(pool).await?;
-        let result = StatsSummary { feeds: feeds_out, documents_by_status: docs_out, last_fetched, chunks: chunks_out, embeddings: embeddings_out, index: index_out, coverage: coverage_out };
-        log.result(&result)?;
-    }
+    // Output envelope
+    let feeds_out = feeds;
+    let docs_out = docs;
+    let last_fetched = db::last_fetched(pool).await?;
+    let chunks_out = db::chunks_summary(pool).await?;
+    let embeddings_out = db::embeddings_totals(pool).await?;
+    let index_out = db::index_meta(pool).await?;
+    let coverage_out = db::coverage(pool).await?;
+    let result = StatsSummary { feeds: feeds_out, documents_by_status: docs_out, last_fetched, chunks: chunks_out, embeddings: embeddings_out, index: index_out, coverage: coverage_out };
+    log.result(&result)?;
 
     Ok(())
 }

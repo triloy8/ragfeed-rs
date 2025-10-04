@@ -44,7 +44,6 @@ pub async fn run(pool: &PgPool, args: QueryCmd) -> Result<()> {
             ("feed", format!("{:?}", args.feed)),
             ("since", format!("{:?}", args.since)),
             ("show_context", args.show_context.to_string()),
-            ("json", telemetry::config::json_mode().to_string()),
             ("model_id", args.model_id.clone()),
             ("device", format!("{:?}", args.device)),
         ])
@@ -125,8 +124,8 @@ pub async fn run(pool: &PgPool, args: QueryCmd) -> Result<()> {
             if let Some(p) = &r.preview { log.info(format!("  {}", p.replace('\n', " "))); }
         }
     }
-    // Emit structured result when in JSON mode (stdout)
-    if telemetry::config::json_mode() { log.result(&out_rows)?; }
+    // Emit structured result to stdout (presenter-selected)
+    log.result(&out_rows)?;
 
     Ok(())
 }

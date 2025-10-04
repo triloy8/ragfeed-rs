@@ -35,17 +35,15 @@ pub async fn run(pool: &PgPool, args: ReindexCmd) -> Result<()> {
             let _sp = log.span(&ReindexPhase::Plan).entered();
             // Always log human message
             log.info("❌ Index rag.embedding_vec_ivf_idx not found. Run `just migrate` to create it.");
-            // Emit structured plan when in JSON mode (stdout)
-            if telemetry::config::json_mode() {
-                #[derive(Serialize)]
-                struct MissingPlan { rows: i64, index: &'static str, message: &'static str }
-                let plan = MissingPlan {
-                    rows: n as i64,
-                    index: "rag.embedding_vec_ivf_idx",
-                    message: "Index missing. Run migrations (just migrate) to create it.",
-                };
-                log.plan(&plan)?;
-            }
+            // Emit structured plan to stdout
+            #[derive(Serialize)]
+            struct MissingPlan { rows: i64, index: &'static str, message: &'static str }
+            let plan = MissingPlan {
+                rows: n as i64,
+                index: "rag.embedding_vec_ivf_idx",
+                message: "Index missing. Run migrations (just migrate) to create it.",
+            };
+            log.plan(&plan)?;
             return Ok(());
         } else {
             anyhow::bail!("Index rag.embedding_vec_ivf_idx not found. Run migrations (just migrate) to create it.");
@@ -71,14 +69,12 @@ pub async fn run(pool: &PgPool, args: ReindexCmd) -> Result<()> {
             n, current_lists, desired_lists, action
         ));
         log.info("   Use --apply to execute.");
-        // Emit structured plan when in JSON mode (stdout)
-        if telemetry::config::json_mode() {
-            #[derive(Serialize)]
-            struct ReindexPlan { rows: i64, current_lists: Option<i32>, desired_lists: i32, action: String, analyze: bool }
-            let action_s = match action { Action::Reindex => "reindex", Action::Swap(_) => "swap" };
-            let plan = ReindexPlan { rows: n as i64, current_lists, desired_lists, action: action_s.to_string(), analyze: true };
-            log.plan(&plan)?;
-        }
+        // Emit structured plan to stdout
+        #[derive(Serialize)]
+        struct ReindexPlan { rows: i64, current_lists: Option<i32>, desired_lists: i32, action: String, analyze: bool }
+        let action_s = match action { Action::Reindex => "reindex", Action::Swap(_) => "swap" };
+        let plan = ReindexPlan { rows: n as i64, current_lists, desired_lists, action: action_s.to_string(), analyze: true };
+        log.plan(&plan)?;
         return Ok(());
     }
 
@@ -111,12 +107,10 @@ pub async fn run(pool: &PgPool, args: ReindexCmd) -> Result<()> {
     log.info("📊 Analyzed rag.embedding");
     log.info("✅ Reindex completed.");
 
-    if telemetry::config::json_mode() {
-        #[derive(Serialize)]
-        struct ReindexResult { action: String, analyzed: bool, desired_lists: i32, current_lists: Option<i32> }
-        let action_s = match action { Action::Reindex => "reindex", Action::Swap(_) => "swap" };
-        log.result(&ReindexResult { action: action_s.to_string(), analyzed: true, desired_lists, current_lists })?;
-    }
+    #[derive(Serialize)]
+    struct ReindexResult { action: String, analyzed: bool, desired_lists: i32, current_lists: Option<i32> }
+    let action_s = match action { Action::Reindex => "reindex", Action::Swap(_) => "swap" };
+    log.result(&ReindexResult { action: action_s.to_string(), analyzed: true, desired_lists, current_lists })?;
     Ok(())
 }
 

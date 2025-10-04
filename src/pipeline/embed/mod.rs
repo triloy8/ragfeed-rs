@@ -62,13 +62,11 @@ pub async fn run(pool: &PgPool, args: EmbedCmd) -> Result<()> {
         for id in &ids { log.info(format!("  chunk_id={}", id)); }
         if (args.plan_limit as i64) < planned { log.info("  ... (more up to planned count)"); }
         log.info("   Use --apply to execute.");
-        // Emit structured plan when in JSON mode (stdout)
-        if telemetry::config::json_mode() {
-            #[derive(Serialize)]
-            struct EmbedPlan { model: String, dim: usize, batch: usize, force: bool, candidates: i64, planned: i64, sample_chunk_ids: Vec<i64> }
-            let plan = EmbedPlan { model: model_tag.clone(), dim: args.dim, batch, force: args.force, candidates: total_candidates, planned, sample_chunk_ids: ids };
-            log.plan(&plan)?;
-        }
+        // Emit structured plan to stdout
+        #[derive(Serialize)]
+        struct EmbedPlan { model: String, dim: usize, batch: usize, force: bool, candidates: i64, planned: i64, sample_chunk_ids: Vec<i64> }
+        let plan = EmbedPlan { model: model_tag.clone(), dim: args.dim, batch, force: args.force, candidates: total_candidates, planned, sample_chunk_ids: ids };
+        log.plan(&plan)?;
         return Ok(());
     }
 
@@ -87,11 +85,9 @@ pub async fn run(pool: &PgPool, args: EmbedCmd) -> Result<()> {
         log.info(format!("ℹ️  No chunks to embed (force={} model={})", args.force, model_tag));
     }
 
-    if telemetry::config::json_mode() {
-        #[derive(Serialize)]
-        struct EmbedResult { total_embedded: i64 }
-        log.result(&EmbedResult { total_embedded: total })?;
-    }
+    #[derive(Serialize)]
+    struct EmbedResult { total_embedded: i64 }
+    log.result(&EmbedResult { total_embedded: total })?;
 
     Ok(())
 }

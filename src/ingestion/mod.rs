@@ -47,15 +47,13 @@ pub async fn run(pool: &PgPool, args: IngestCmd) -> Result<()> {
         for f in feeds.iter().take(args.plan_limit) { log.info(format!("  feed_id={} url={} name={:?}", f.feed_id, f.url, f.name)); }
         if feeds.len() > args.plan_limit { log.info(format!("  ... ({} more)", feeds.len() - args.plan_limit)); }
         log.info("   Use --apply to execute.");
-        // Emit structured plan when in JSON mode (stdout)
-        if telemetry::config::json_mode() {
-            use types::{FeedSample, IngestPlan};
-            let samples: Vec<FeedSample> = feeds.iter().take(args.plan_limit)
-                .map(|f| FeedSample { feed_id: f.feed_id, url: f.url.clone(), name: f.name.clone() })
-                .collect();
-            let plan = IngestPlan { feeds: feeds.len(), mode: mode.to_string(), limit: args.limit, sample_feeds: samples };
-            log.plan(&plan)?;
-        }
+        // Emit structured plan to stdout
+        use types::{FeedSample, IngestPlan};
+        let samples: Vec<FeedSample> = feeds.iter().take(args.plan_limit)
+            .map(|f| FeedSample { feed_id: f.feed_id, url: f.url.clone(), name: f.name.clone() })
+            .collect();
+        let plan = IngestPlan { feeds: feeds.len(), mode: mode.to_string(), limit: args.limit, sample_feeds: samples };
+        log.plan(&plan)?;
         return Ok(());
     }
 
@@ -122,13 +120,11 @@ pub async fn run(pool: &PgPool, args: IngestCmd) -> Result<()> {
 
     log.totals(total_inserted, total_updated, total_skipped, total_errors);
 
-    if telemetry::config::json_mode() {
-        use types::{IngestTotals, IngestApply};
-        let result = IngestApply {
-            totals: IngestTotals { inserted: total_inserted, updated: total_updated, skipped: total_skipped, errors: total_errors },
-            per_feed,
-        };
-        log.result(&result)?;
-    }
+    use types::{IngestTotals, IngestApply};
+    let result = IngestApply {
+        totals: IngestTotals { inserted: total_inserted, updated: total_updated, skipped: total_skipped, errors: total_errors },
+        per_feed,
+    };
+    log.result(&result)?;
     Ok(())
 }

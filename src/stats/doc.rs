@@ -32,8 +32,8 @@ pub async fn snapshot_doc(pool: &PgPool, id: i64, chunk_limit: i64) -> Result<()
         }
     }
 
-    // JSON envelope
-    if telemetry::config::json_mode() { log.result(&snap)?; }
+    // Output envelope
+    log.result(&snap)?;
 
     Ok(())
 }

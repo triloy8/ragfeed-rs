@@ -16,7 +16,7 @@ pub async fn snapshot_chunk(pool: &PgPool, id: i64) -> Result<()> {
     log.info(format!("  Tokens: {:?}", row.token_count));
     log.info(format!("  Preview: {:?}", row.preview));
 
-    if telemetry::config::json_mode() { log.result(&row)?; }
+    log.result(&row)?;
 
     Ok(())
 }

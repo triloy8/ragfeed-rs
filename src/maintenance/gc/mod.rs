@@ -103,7 +103,7 @@ pub async fn run(pool: &PgPool, args: GcCmd) -> Result<()> {
         }
     }
 
-    if !execute && telemetry::config::json_mode() {
+    if !execute {
         #[derive(Serialize)]
         struct Counts { orphan_chunks: i64, orphan_embeddings: i64, error_docs: i64, never_chunked_docs: i64, bad_chunks: i64 }
         #[derive(Serialize)]
@@ -129,7 +129,7 @@ pub async fn run(pool: &PgPool, args: GcCmd) -> Result<()> {
         };
         let log = telemetry::gc();
         log.plan(&plan)?;
-    } else if execute && telemetry::config::json_mode() {
+    } else if execute {
         #[derive(Serialize)]
         struct Counts { orphan_chunks: i64, orphan_embeddings: i64, error_docs: i64, never_chunked_docs: i64, bad_chunks: i64 }
         #[derive(Serialize)]

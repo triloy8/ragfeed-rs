@@ -65,21 +65,19 @@ pub async fn run(pool: &PgPool, args: ChunkCmd) -> Result<()> {
         }
         if docs.len() > args.plan_limit { log.info(format!("  ... ({} more)", docs.len() - args.plan_limit)); }
         log.info("   Use --apply to execute.");
-        // Emit structured plan when in JSON mode (stdout)
-        if telemetry::config::json_mode() {
-            #[derive(Serialize)]
-            struct ChunkPlan { docs: usize, force: bool, tokens_target: usize, overlap: usize, max_chunks_per_doc: usize, sample_doc_ids: Vec<i64> }
-            let sample_doc_ids: Vec<i64> = docs.iter().take(args.plan_limit).map(|(id, _)| *id).collect();
-            let plan = ChunkPlan {
-                docs: docs.len(),
-                force: args.force,
-                tokens_target: args.tokens_target,
-                overlap: args.overlap,
-                max_chunks_per_doc: args.max_chunks_per_doc,
-                sample_doc_ids,
-            };
-            log.plan(&plan)?;
-        }
+        // Emit structured plan to stdout
+        #[derive(Serialize)]
+        struct ChunkPlan { docs: usize, force: bool, tokens_target: usize, overlap: usize, max_chunks_per_doc: usize, sample_doc_ids: Vec<i64> }
+        let sample_doc_ids: Vec<i64> = docs.iter().take(args.plan_limit).map(|(id, _)| *id).collect();
+        let plan = ChunkPlan {
+            docs: docs.len(),
+            force: args.force,
+            tokens_target: args.tokens_target,
+            overlap: args.overlap,
+            max_chunks_per_doc: args.max_chunks_per_doc,
+            sample_doc_ids,
+        };
+        log.plan(&plan)?;
         return Ok(());
     }
 
@@ -138,13 +136,11 @@ pub async fn run(pool: &PgPool, args: ChunkCmd) -> Result<()> {
         per_doc.push(DocResult { doc_id, inserted });
     }
 
-    if telemetry::config::json_mode() {
-        #[derive(Serialize)]
-        struct ChunkResult { totals: usize, per_doc: Vec<DocResult> }
-        let totals = per_doc.iter().map(|d| d.inserted).sum();
-        let res = ChunkResult { totals, per_doc };
-        let log = telemetry::chunk();
-        log.result(&res)?;
-    }
+    #[derive(Serialize)]
+    struct ChunkResult { totals: usize, per_doc: Vec<DocResult> }
+    let totals = per_doc.iter().map(|d| d.inserted).sum();
+    let res = ChunkResult { totals, per_doc };
+    let log = telemetry::chunk();
+    log.result(&res)?;
     Ok(())
 }

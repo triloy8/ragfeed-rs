@@ -77,27 +77,25 @@ pub async fn feed_stats(pool: &PgPool, feed_id: i32, doc_limit: i64) -> Result<(
         }
     }
 
-    // JSON envelope
-    if telemetry::config::json_mode() {
-        let last_fetched = db::feed_last_fetched(pool, feed_id).await?;
-        let chunks = db::feed_chunks_summary(pool, feed_id).await?;
-        let models = db::feed_models(pool, feed_id).await?;
-        let pending_top_docs = db::feed_pending_top_docs(pool, feed_id, 10).await?;
-        let latest_docs_rows = db::latest_docs(pool, feed_id, doc_limit).await?;
+    // Output envelope
+    let last_fetched = db::feed_last_fetched(pool, feed_id).await?;
+    let chunks = db::feed_chunks_summary(pool, feed_id).await?;
+    let models = db::feed_models(pool, feed_id).await?;
+    let pending_top_docs = db::feed_pending_top_docs(pool, feed_id, 10).await?;
+    let latest_docs_rows = db::latest_docs(pool, feed_id, doc_limit).await?;
 
-        let result = StatsFeedStats {
-            feed: f,
-            documents_by_status: docs,
-            last_fetched,
-            chunks,
-            coverage: cov,
-            missing,
-            models,
-            pending_top_docs,
-            latest_docs: latest_docs_rows,
-        };
-        log.result(&result)?;
-    }
+    let result = StatsFeedStats {
+        feed: f,
+        documents_by_status: docs,
+        last_fetched,
+        chunks,
+        coverage: cov,
+        missing,
+        models,
+        pending_top_docs,
+        latest_docs: latest_docs_rows,
+    };
+    log.result(&result)?;
 
     Ok(())
 }

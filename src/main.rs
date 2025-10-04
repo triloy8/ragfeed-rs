@@ -24,9 +24,6 @@ mod output;
 struct Cli {
     #[arg(global = true, short, long)]
     dsn: Option<String>,
-    /// Emit a single JSON envelope to stdout; logs go to stderr
-    #[arg(global = true, long, default_value_t = false)]
-    json: bool,
 
     #[command(subcommand)]
     command: Commands,
@@ -48,7 +45,6 @@ enum Commands {
 async fn main() -> Result<()> {
     dotenv().ok();
     let cli = Cli::parse();
-    telemetry::config::set_json_mode(cli.json);
     let _t0 = Instant::now();
 
     // initialize logging/tracing (stderr). Respect RUST_LOG and RAG_LOG_FORMAT

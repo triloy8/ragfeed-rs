@@ -1,10 +1,3 @@
-use std::sync::OnceLock;
-
-static JSON_MODE: OnceLock<bool> = OnceLock::new();
-
-pub fn set_json_mode(v: bool) { let _ = JSON_MODE.set(v); }
-pub fn json_mode() -> bool { *JSON_MODE.get().unwrap_or(&false) }
-
 pub fn logs_are_json() -> bool {
     matches!(std::env::var("RAG_LOG_FORMAT").as_deref(), Ok("json"))
 }
