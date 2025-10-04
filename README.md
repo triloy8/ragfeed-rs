@@ -16,6 +16,7 @@ The CLI is designed for both human‑friendly logs and machine‑readable JSON e
 - PostgreSQL 14+ with the pgvector extension installed
 - Network access for downloading models/tokenizers from Hugging Face (first run)
 - A provisioned database and `DATABASE_URL` pointing to it
+- Feed format: only RSS 2.0 feeds are supported
 
 Database notes:
 - Ensure `pgvector` is installed in your database: `CREATE EXTENSION IF NOT EXISTS vector;`
@@ -25,6 +26,7 @@ Build notes (sqlx):
 - The code uses `sqlx::query!()` macros. At build time, either:
   - Provide a reachable `DATABASE_URL` so sqlx can validate queries, or
   - Use sqlx offline mode with a generated `sqlx-data.json` (not included in repo).
+  - Online build note: ensure the target database is alive and migrated before building, as sqlx validates against the live schema
 
 ## Installation
 
