@@ -85,3 +85,41 @@ impl Emitter {
 }
 
 fn to_io(e: serde_json::Error) -> io::Error { io::Error::new(io::ErrorKind::Other, e) }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::output::types::Envelope;
+    use serde_json::Value;
+
+    #[test]
+    fn mcp_plan_emits_jsonrpc_notification() {
+        let env = Envelope::plan("Query", &serde_json::json!({"docs": 2}), None).unwrap();
+        let mut buf: Vec<u8> = Vec::new();
+        let presenter = McpPresenter { pretty: false };
+        presenter.emit(&env, &mut buf).unwrap();
+        let s = String::from_utf8(buf).unwrap();
+        let line = s.lines().next().unwrap();
+        let v: Value = serde_json::from_str(line).unwrap();
+        assert_eq!(v["jsonrpc"], "2.0");
+        assert_eq!(v["method"], "notifications/plan");
+        assert_eq!(v["params"]["schema_version"], Envelope::plan("x", &serde_json::json!({}), None).unwrap().schema_version);
+        assert_eq!(v["params"]["op"], "Query");
+        assert!(v["params"]["plan"].is_object());
+    }
+
+    #[test]
+    fn mcp_result_emits_jsonrpc_notification() {
+        let env = Envelope::result("Query", &serde_json::json!({"rows": 3}), None).unwrap();
+        let mut buf: Vec<u8> = Vec::new();
+        let presenter = McpPresenter { pretty: false };
+        presenter.emit(&env, &mut buf).unwrap();
+        let s = String::from_utf8(buf).unwrap();
+        let line = s.lines().next().unwrap();
+        let v: Value = serde_json::from_str(line).unwrap();
+        assert_eq!(v["jsonrpc"], "2.0");
+        assert_eq!(v["method"], "notifications/result");
+        assert_eq!(v["params"]["op"], "Query");
+        assert!(v["params"]["result"].is_object());
+    }
+}
