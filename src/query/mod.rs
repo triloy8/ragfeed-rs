@@ -1,7 +1,6 @@
 use anyhow::{bail, Context, Result};
 use clap::Args;
 use chrono::{DateTime, Utc};
-use serde::Serialize;
 use sqlx::PgPool;
 
 use crate::encoder::{Device, E5Encoder};

@@ -3,7 +3,6 @@ use sqlx::PgPool;
 
 use crate::telemetry::{self};
 use crate::telemetry::ops::stats::Phase as StatsPhase;
-use crate::stats::types::*;
 use crate::stats::db;
 
 pub async fn snapshot_doc(pool: &PgPool, id: i64, chunk_limit: i64) -> Result<()> {

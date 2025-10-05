@@ -1,9 +1,9 @@
 use anyhow::Result;
 use serde::Serialize;
 use std::marker::PhantomData;
-use tracing::{info, debug, warn, error, info_span, Span};
+use tracing::{info, debug, warn, error, Span};
 
-use super::{config, emit};
+use super::{emit};
 
 pub trait PhaseSpan {
     fn name(&self) -> &'static str;

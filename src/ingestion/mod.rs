@@ -1,6 +1,5 @@
 use anyhow::Result;
 use clap::Args;
-use serde::Serialize;
 use sqlx::PgPool;
 use reqwest::Client;
 use chrono::{DateTime, Utc};

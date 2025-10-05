@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Result};
 use clap::Args;
 use serde::Serialize;
 use sqlx::PgPool;
