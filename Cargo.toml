@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }   # CLI arg parsing
 tokio = { version = "1", features = ["full"] }      # async runtime
+tokio-util = { version = "0.7", features = ["full"] }
 sqlx = { version = "0.7", features = ["postgres", "runtime-tokio-rustls", "uuid", "json", "chrono"] }  # DB + migrations
 anyhow = "1.0"
 dotenvy = "0.15"
@@ -27,7 +28,9 @@ ort = { version = "2.0.0-rc.10", default-features = false, features = ["download
 url = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
-
+rmcp = { git = "https://github.com/modelcontextprotocol/rust-sdk", default-features = false, features = ["server", "macros", "base64"], optional = true }
+futures = { version = "0.3", optional = true }
+schemars = { version = "1.0", features = ["chrono04"], optional = true }
 [build-dependencies]
 sqlx-migrate = "0.7"
 
@@ -36,3 +39,4 @@ default = []
 # cuda support w/ --features cuda
 cuda = ["ort/cuda"]
 gpt2-tokenizer = []
+mcp-server = ["rmcp", "futures", "schemars"]

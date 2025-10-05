@@ -8,6 +8,7 @@ use crate::telemetry::ops::feed::Phase as FeedPhase;
 
 mod db;
 pub mod types;
+pub use db::list_feeds;
 
 /// rag feed add/ls
 #[derive(Args)]

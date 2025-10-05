@@ -1,22 +1,25 @@
+use std::fmt;
+
 use anyhow::{bail, Context, Result};
 use clap::Args;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use sqlx::PgPool;
+use tokio::select;
+use tokio_util::sync::CancellationToken;
 
 use crate::encoder::{Device, E5Encoder};
 use crate::encoder::traits::Embedder;
 use crate::util::time::parse_since_opt;
 
 use crate::telemetry::{self};
-use crate::telemetry::ops::query::Phase as QueryPhase;
 
 mod db;
 mod post;
 
 pub use post::QueryResultRow;
 
-#[derive(Args, Debug)]
+#[derive(Args, Debug, Clone)]
 pub struct QueryCmd {
     query: String,
     #[arg(long, default_value_t = 100)] top_n: i64,
@@ -33,99 +36,224 @@ pub struct QueryCmd {
     #[arg(long, value_enum, default_value_t = Device::Cpu)] pub device: Device,
 }
 
+#[derive(Debug, Clone)]
+pub struct QueryRequest {
+    pub text: String,
+    pub top_n: i64,
+    pub topk: usize,
+    pub doc_cap: usize,
+    pub probes: Option<i32>,
+    pub feed: Option<i32>,
+    pub since: Option<String>,
+    pub show_context: bool,
+    pub model_id: String,
+    pub onnx_filename: Option<String>,
+    pub device: Device,
+}
+
+impl From<QueryCmd> for QueryRequest {
+    fn from(cmd: QueryCmd) -> Self {
+        QueryRequest {
+            text: cmd.query,
+            top_n: cmd.top_n,
+            topk: cmd.topk,
+            doc_cap: cmd.doc_cap,
+            probes: cmd.probes,
+            feed: cmd.feed,
+            since: cmd.since,
+            show_context: cmd.show_context,
+            model_id: cmd.model_id,
+            onnx_filename: cmd.onnx_filename,
+            device: cmd.device,
+        }
+    }
+}
+
+#[cfg(feature = "mcp-server")]
+impl QueryRequest {
+    pub fn from_mcp_params(params: &crate::mcp::types::QueryRunParams) -> Self {
+        QueryRequest {
+            text: params.text.clone(),
+            top_n: params.top_n.unwrap_or(100) as i64,
+            topk: params.topk.unwrap_or(6) as usize,
+            doc_cap: params.doc_cap.unwrap_or(2) as usize,
+            probes: params.probes,
+            feed: params.feed,
+            since: params.since.clone(),
+            show_context: params.show_context.unwrap_or(false),
+            model_id: "intfloat/e5-small-v2".to_string(),
+            onnx_filename: None,
+            device: Device::Cpu,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct QueryPlanSummary {
+    pub top_n: i64,
+    pub topk: usize,
+    pub doc_cap: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub probes_requested: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub probes_applied: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub feed: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub since: Option<String>,
+    pub show_context: bool,
+    pub embeddings_available: bool,
+    pub model_id: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct QueryExecutionResult {
+    pub plan: QueryPlanSummary,
+    pub rows: Vec<QueryResultRow>,
+}
+
+#[derive(Debug, Clone)]
+pub struct QueryCancelled;
+
+impl fmt::Display for QueryCancelled {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "query cancelled")
+    }
+}
+
+impl std::error::Error for QueryCancelled {}
+
+pub fn is_cancelled_error(err: &anyhow::Error) -> bool {
+    err.downcast_ref::<QueryCancelled>().is_some()
+}
+
 pub async fn run(pool: &PgPool, args: QueryCmd) -> Result<()> {
     let log = telemetry::query();
-    let _g = log
-        .root_span_kv([
-            ("top_n", args.top_n.to_string()),
-            ("topk", args.topk.to_string()),
-            ("doc_cap", args.doc_cap.to_string()),
-            ("probes", format!("{:?}", args.probes)),
-            ("feed", format!("{:?}", args.feed)),
-            ("since", format!("{:?}", args.since)),
-            ("show_context", args.show_context.to_string()),
-            ("model_id", args.model_id.clone()),
-            ("device", format!("{:?}", args.device)),
-        ])
-        .entered();
+    log.info(format!(
+        "🔍 query top_n={} topk={} doc_cap={}, probes={:?}, feed={:?}, since={:?}, show_context={}, model={}",
+        args.top_n, args.topk, args.doc_cap, args.probes, args.feed, args.since, args.show_context, args.model_id
+    ));
 
-    // ensure embeddings exist to learn dim
-    let _prep = log.span(&QueryPhase::Prepare).entered();
-    let dim_row = sqlx::query!("SELECT dim FROM rag.embedding LIMIT 1")
-        .fetch_optional(pool)
-        .await?;
-    if dim_row.is_none() {
+    let req: QueryRequest = args.clone().into();
+    let execution = execute_query(pool, req, None).await?;
+
+    log.plan(&execution.plan)?;
+
+    if !execution.plan.embeddings_available {
         log.info("ℹ️  No embeddings found. Run `rag embed` first.");
         return Ok(());
     }
-    let db_dim = dim_row.unwrap().dim as usize;
 
-    // build encoder and embed the query
-    let mut enc: Box<dyn Embedder> = {
-        let _s = log.span(&QueryPhase::Prepare).entered();
-        Box::new(E5Encoder::new(&args.model_id, args.onnx_filename.as_deref(), args.device)
-            .context("init encoder")?)
-    };
-    let qvec = {
-        let _s = log.span(&QueryPhase::EmbedQuery).entered();
-        enc.embed_query(&args.query).context("embed query")?
-    };
-    if qvec.len() != db_dim {
-        bail!("query embedding dim={} != DB dim={}", qvec.len(), db_dim);
-    }
-
-    // set probes
-    let probes = match args.probes {
-        Some(p) => Some(p.max(1)),
-        None => db::recommend_probes(pool).await?,
-    };
-    if let Some(p) = probes {
-        let _s = log.span(&QueryPhase::SetProbes).entered();
-        let sql = format!("SET LOCAL ivfflat.probes = {}", p);
-        sqlx::query(&sql).execute(pool).await?;
-    }
-
-    // filters
-    let since_ts: Option<DateTime<Utc>> = parse_since_opt(&args.since)?;
-
-    // fetch ANN candidates
-    let _fetch = log.span(&QueryPhase::FetchCandidates).entered();
-    let candidates = db::fetch_ann_candidates(
-        pool,
-        &qvec,
-        args.top_n.max(1),
-        args.feed,
-        since_ts,
-        args.show_context,
-    )
-    .await?;
-    drop(_fetch);
-
-    if candidates.is_empty() {
+    if execution.rows.is_empty() {
         log.info("ℹ️  No results");
         return Ok(());
     }
 
-    // post-filter and format
-    let _pf = log.span(&QueryPhase::PostFilter).entered();
-    let out_rows: Vec<QueryResultRow> = post::shape_results(candidates, args.topk, args.doc_cap);
-    drop(_pf);
-
-    // output
-    let _out_span = log.span(&QueryPhase::Output).entered();
-    // Always log human-readable results
     log.info("🔍 Results:");
-    for r in &out_rows {
+    for r in &execution.rows {
         log.info(format!(
             "#{}  dist={:.4}  chunk={} doc={}  {:?}",
             r.rank, r.distance, r.chunk_id, r.doc_id, r.title
         ));
-        if args.show_context {
+        if execution.plan.show_context {
             if let Some(p) = &r.preview { log.info(format!("  {}", p.replace('\n', " "))); }
         }
     }
-    // Emit structured result to stdout (presenter-selected)
-    log.result(&out_rows)?;
+    log.result(&execution.rows)?;
 
     Ok(())
+}
+
+pub async fn execute_query(
+    pool: &PgPool,
+    mut req: QueryRequest,
+    ct: Option<&CancellationToken>,
+) -> Result<QueryExecutionResult> {
+    req.top_n = req.top_n.max(1);
+    req.topk = req.topk.max(1);
+    req.doc_cap = req.doc_cap.max(1);
+
+    let mut plan = QueryPlanSummary {
+        top_n: req.top_n,
+        topk: req.topk,
+        doc_cap: req.doc_cap,
+        probes_requested: req.probes,
+        probes_applied: None,
+        feed: req.feed,
+        since: req.since.clone(),
+        show_context: req.show_context,
+        embeddings_available: false,
+        model_id: req.model_id.clone(),
+    };
+
+    let dim_row = select_with_cancel(ct, sqlx::query!("SELECT dim FROM rag.embedding LIMIT 1").fetch_optional(pool)).await?;
+
+    if dim_row.is_none() {
+        return Ok(QueryExecutionResult { plan, rows: Vec::new() });
+    }
+
+    plan.embeddings_available = true;
+    let db_dim = dim_row.unwrap().dim as usize;
+
+    let qvec = {
+        let mut enc: Box<dyn Embedder> = Box::new(
+            E5Encoder::new(&req.model_id, req.onnx_filename.as_deref(), req.device)
+                .context("init encoder")?,
+        );
+        let embedded = enc.embed_query(&req.text).context("embed query")?;
+        drop(enc);
+        embedded
+    };
+
+    if qvec.len() != db_dim {
+        bail!("query embedding dim={} != DB dim={}", qvec.len(), db_dim);
+    }
+
+    let probes = match req.probes {
+        Some(p) => Some(p.max(1)),
+        None => select_with_cancel(ct, db::recommend_probes(pool)).await?,
+    };
+
+    if let Some(p) = probes {
+        plan.probes_applied = Some(p);
+        let sql = format!("SET LOCAL ivfflat.probes = {}", p);
+        select_with_cancel(ct, sqlx::query(&sql).execute(pool)).await?;
+    }
+
+    let since_ts: Option<DateTime<Utc>> = parse_since_opt(&req.since)?;
+
+    let candidates = select_with_cancel(
+        ct,
+        db::fetch_ann_candidates(
+            pool,
+            &qvec,
+            req.top_n,
+            req.feed,
+            since_ts,
+            req.show_context,
+        ),
+    )
+    .await?;
+
+    if candidates.is_empty() {
+        return Ok(QueryExecutionResult { plan, rows: Vec::new() });
+    }
+
+    let rows = post::shape_results(candidates, req.topk, req.doc_cap);
+    Ok(QueryExecutionResult { plan, rows })
+}
+
+async fn select_with_cancel<T, F, E>(ct: Option<&CancellationToken>, fut: F) -> Result<T>
+where
+    F: std::future::Future<Output = Result<T, E>>,
+    E: Into<anyhow::Error> + Send + 'static,
+{
+    if let Some(token) = ct {
+        select! {
+            _ = token.cancelled() => Err(QueryCancelled.into()),
+            res = fut => Ok(res.map_err(|e| e.into())?)
+        }
+    } else {
+        Ok(fut.await.map_err(|e| e.into())?)
+    }
 }

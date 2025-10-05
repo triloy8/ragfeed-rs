@@ -2,7 +2,7 @@ use serde::Serialize;
 
 use super::db::CandRow;
 
-#[derive(Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct QueryResultRow {
     pub rank: usize,
     pub distance: f32,
@@ -31,4 +31,3 @@ pub fn shape_results(candidates: Vec<CandRow>, topk: usize, doc_cap: usize) -> V
     }
     out
 }
-

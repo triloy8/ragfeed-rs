@@ -3,8 +3,10 @@ pub mod ctx;
 pub mod emit;
 pub mod macros;
 pub mod ops;
+pub mod sink;
 
 use ctx::LogCtx;
+pub use sink::{current_sink, install_sink, EventPayload, OutputSink, SinkGuard, StdoutSink};
 
 // Factory helpers mirroring the old out::{ingest, init, ...} API
 pub fn ingest() -> LogCtx<ops::ingest::Ingest> { LogCtx { json: config::logs_are_json(), _marker: std::marker::PhantomData } }

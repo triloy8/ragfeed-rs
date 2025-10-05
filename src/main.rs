@@ -18,6 +18,8 @@ mod maintenance;
 mod telemetry;
 mod pipeline;
 mod output;
+#[cfg(feature = "mcp-server")]
+mod mcp;
 
 #[derive(Parser)]
 #[command(name = "rag", about = "RAG pipeline CLI")]
@@ -39,6 +41,8 @@ enum Commands {
     Reindex(maintenance::reindex::ReindexCmd),
     Gc(maintenance::gc::GcCmd),
     Query(query::QueryCmd),
+    #[cfg(feature = "mcp-server")]
+    Mcp(mcp::McpCmd),
 }
 
 #[tokio::main]
@@ -65,6 +69,8 @@ async fn main() -> Result<()> {
         Commands::Reindex(args) => maintenance::reindex::run(&pool, args).await?,
         Commands::Gc(args) => maintenance::gc::run(&pool, args).await?,
         Commands::Query(args) => query::run(&pool, args).await?,
+        #[cfg(feature = "mcp-server")]
+        Commands::Mcp(cmd) => mcp::run(&pool, cmd).await?,
         // Commands::Eval => println!("TODO: eval"),
     }
 

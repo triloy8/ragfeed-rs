@@ -66,6 +66,10 @@ Migrations with sqlx-cli (install once: `cargo install sqlx-cli`)
 - `RAG_OUTPUT_PRETTY` — `true|false` pretty-prints outputs; default `false`
 - `NO_COLOR` — set to disable ANSI colors in text output
 - `HF_HOME` — optional, Hugging Face cache directory
+- MCP server (feature `mcp-server`):
+  - `MCP_ALLOW_APPLY` — `true|false` (default `false`) to allow write operations
+  - `MCP_APPLY_TOOLS` — comma-separated tool allowlist for writes (e.g. `feed.add`)
+  - `MCP_MAX_CONCURRENCY` — max concurrent tool executions (default `2`)
 
 Every command also accepts `--dsn` to override `DATABASE_URL`.
 
@@ -75,8 +79,42 @@ Outputs vs Logs
 - Examples:
   - `RAG_OUTPUT_FORMAT=json rag query 'x' | jq .`
   - `RAG_OUTPUT_FORMAT=json RAG_LOG_FORMAT=json rag ingest --apply > out.ndjson 2> logs.ndjson`
-  - `RAG_OUTPUT_FORMAT=text RAG_LOG_FORMAT=json rag stats > out.txt 2> logs.ndjson`
-  - More in `docs/20251003T075300_output_examples.md`.
+ - `RAG_OUTPUT_FORMAT=text RAG_LOG_FORMAT=json rag stats > out.txt 2> logs.ndjson`
+ - More in `docs/20251003T075300_output_examples.md`.
+
+## MCP Server (Experimental)
+
+Build with the optional feature:
+
+```bash
+cargo build --release --features mcp-server
+```
+
+Launch the native MCP server over stdio:
+
+```bash
+rag mcp \
+  --dsn postgres://... \
+  --max-concurrency 4 \
+  --allow-tools feed.add
+```
+
+Key characteristics:
+
+- **Plan-only by default** — tools such as `feed.add` coerce `apply=false` unless `MCP_ALLOW_APPLY=true` *or* the tool name is included in `MCP_APPLY_TOOLS` / `--allow-tools`.
+- **Live telemetry streamed as MCP logging notifications** — plan/result events are forwarded via `notifications/message` while stdout remains quiet for the duration of the session.
+- **Cancellation-aware** — long-running tools (e.g., `query.run`) observe client cancellation requests through the MCP cancellation token.
+- **Concurrency control** — use `--max-concurrency` (or `MCP_MAX_CONCURRENCY`) to bound simultaneous tool executions.
+
+Tool catalog (initial):
+
+| Tool        | Description                              |
+|-------------|------------------------------------------|
+| `feed.add`  | Plan or apply feed upserts (policy gated)|
+| `feed.ls`   | List configured feeds                     |
+| `query.run` | Execute ANN queries and return rows       |
+
+Each call returns structured JSON content blocks describing plan details and results; additional progress is streamed via MCP logging notifications for IDEs/agents.
 
 ## Quickstart
 
