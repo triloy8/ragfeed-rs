@@ -13,17 +13,20 @@ The CLI is designed for both human‑friendly logs and machine‑readable JSON e
 ## Prerequisites
 
 - Rust toolchain (latest stable)
-- PostgreSQL 14+ with the pgvector extension installed
+- Docker with the Compose plugin (runs the bundled Postgres 16 + pgvector service)
 - Network access for downloading models/tokenizers from Hugging Face (first run)
-- A provisioned database and `DATABASE_URL` pointing to it
+- Optional: your own PostgreSQL 14+ with pgvector if you skip the bundled container
 - Feed format: only RSS 2.0 feeds are supported
 
 Database notes:
-- Ensure `pgvector` is installed in your database: `CREATE EXTENSION IF NOT EXISTS vector;`
-- This project uses `rag` schema. Create it once if not present: `CREATE SCHEMA IF NOT EXISTS rag;`
+- `just db-up` starts the `docker-compose.yml` service (`pgvector/pgvector:pg16`) and runs `docker/db/init.sql`, which installs `pgvector` and creates the `rag` schema on first boot.
+- Targeting an external database instead? Ensure once:
+  - `CREATE EXTENSION IF NOT EXISTS vector;`
+  - `CREATE SCHEMA IF NOT EXISTS rag;`
 
 Build notes (sqlx):
 - The code uses `sqlx::query!()` macros. At build time, either:
+  - When using the bundled Docker DB, run `just db-up` so the `.env` default (`postgres://rag:rag@localhost:5433/rag`) is reachable.
   - Provide a reachable `DATABASE_URL` so sqlx can validate queries, or
   - Use sqlx offline mode with a generated `sqlx-data.json` (not included in repo).
   - Online build note: ensure the target database is alive and migrated before building, as sqlx validates against the live schema
@@ -59,7 +62,7 @@ Migrations with sqlx-cli (install once: `cargo install sqlx-cli`)
 
 ## Configuration
 
-- `DATABASE_URL` — Postgres DSN (e.g., `postgres://user:pass@host:5432/db`)
+- `DATABASE_URL` — Postgres DSN. Default `.env` points to the Docker DB (`postgres://rag:rag@localhost:5433/rag`).
 - `RUST_LOG` — e.g., `info`, `debug`, `rag=debug,sqlx=warn`
 - `RAG_LOG_FORMAT` — `json` for structured logs to stderr; default is compact text
 - `RAG_OUTPUT_FORMAT` — `text|json|mcp` for outputs to stdout; default `text`
@@ -263,9 +266,6 @@ Practical implications
 - The generic extractor uses simple CSS selectors with a paragraph fallback; site‑specific extractors can be added under `src/ingestion/extractor/`.
 - Be mindful of target site policies; add delays or caching as needed for respectful ingestion.
 
----
-
-Happy hacking! If you want, I can add an example `.env` and a minimal docker‑compose for Postgres + pgvector.
 ## Code Structure
 
 - Each module separates database access into a `db.rs` where practical:
