@@ -55,6 +55,7 @@ struct ComposePlan<'a> {
     model: &'a str,
     embed_model: &'a str,
     system_message: &'a str,
+    hit_count: usize,
     dry_run: bool,
     hits: Vec<ComposeHit>,
     prompt_sections: Vec<PromptSection<'a>>,
@@ -66,6 +67,7 @@ struct ComposeResult<'a> {
     model: String,
     answer: &'a str,
     hits: Vec<ComposeHit>,
+    retrieved_chunks: usize,
     usage: Option<UsageDto>,
 }
 
@@ -123,7 +125,22 @@ pub async fn run(pool: &PgPool, args: ComposeCmd) -> Result<()> {
     drop(_retrieve_span);
 
     if outcome.rows.is_empty() {
-        log.info("ℹ️  No results");
+        let hint = if args.feed.is_some() || args.since.is_some() {
+            let mut details = Vec::new();
+            if let Some(feed) = args.feed { details.push(format!("feed={feed}")); }
+            if let Some(since) = &args.since { details.push(format!("since={since}")); }
+            if details.is_empty() {
+                "try relaxing filters or ensure content has been ingested, chunked, and embedded".to_string()
+            } else {
+                format!(
+                    "try relaxing filters ({}) or ensure the selected feed has recent chunked + embedded content",
+                    details.join(", ")
+                )
+            }
+        } else {
+            "ensure documents have been ingested, chunked, and embedded before composing".to_string()
+        };
+        log.info(format!("ℹ️  No results — {hint}"));
         return Ok(());
     }
 
@@ -137,6 +154,10 @@ pub async fn run(pool: &PgPool, args: ComposeCmd) -> Result<()> {
         .clone()
         .unwrap_or_else(|| client_cfg.default_model.clone());
 
+    let hits = extract_hits(&outcome);
+    let hit_count = hits.len();
+    log.info(format!("📚 Retrieved {hit_count} chunk{}", if hit_count == 1 { "" } else { "s" }));
+
     if args.dry_run {
         let prompt_sections = build_prompt_sections(&outcome);
         let plan = ComposePlan {
@@ -144,8 +165,9 @@ pub async fn run(pool: &PgPool, args: ComposeCmd) -> Result<()> {
             model: &model_name,
             embed_model: &args.embed_model,
             system_message: &system_message,
+            hit_count,
             dry_run: args.dry_run,
-            hits: extract_hits(&outcome),
+            hits: hits.clone(),
             prompt_sections,
         };
         log.info("📝 Dry run — skipping LLM call");
@@ -153,7 +175,6 @@ pub async fn run(pool: &PgPool, args: ComposeCmd) -> Result<()> {
         return Ok(());
     }
 
-    let hits = extract_hits(&outcome);
     let prompt = build_prompt(&args.query, &outcome);
 
     let _prompt_span = log.span(&ComposePhase::Prompt).entered();
@@ -175,11 +196,31 @@ pub async fn run(pool: &PgPool, args: ComposeCmd) -> Result<()> {
     };
 
     let _call_span = log.span(&ComposePhase::CallLlm).entered();
-    let response = client
-        .chat_completion(request)
-        .await
-        .map_err(to_anyhow)
-        .with_context(|| "call OpenAI chat completion")?;
+    let response = match client.chat_completion(request).await {
+        Ok(resp) => resp,
+        Err(err) => {
+            match &err {
+                OpenAiError::MissingApiKey => {
+                    log.warn("⚠️  Missing OPENAI_API_KEY — set it or use --dry-run / OPENAI_BASE_URL for a compatible proxy.");
+                }
+                OpenAiError::Api { status, error } => {
+                    log.warn(format!(
+                        "⚠️  OpenAI API error {} — {}",
+                        status,
+                        error.message
+                    ));
+                }
+                OpenAiError::Timeout => {
+                    log.warn("⚠️  OpenAI request timed out — consider retrying or increasing OPENAI_TIMEOUT_SECS.");
+                }
+                _ => {
+                    log.warn("⚠️  OpenAI request failed — see error details below.");
+                }
+            }
+            drop(_call_span);
+            return Err(to_anyhow(err).context("call OpenAI chat completion"));
+        }
+    };
     drop(_call_span);
 
     let answer = response.content.trim().to_string();
@@ -196,6 +237,7 @@ pub async fn run(pool: &PgPool, args: ComposeCmd) -> Result<()> {
         model: model_name,
         answer: &answer,
         hits,
+        retrieved_chunks: hit_count,
         usage,
     };
 

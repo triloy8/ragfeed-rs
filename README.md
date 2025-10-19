@@ -69,6 +69,10 @@ Migrations with sqlx-cli (install once: `cargo install sqlx-cli`)
 - `RAG_OUTPUT_PRETTY` — `true|false` pretty-prints outputs; default `false`
 - `NO_COLOR` — set to disable ANSI colors in text output
 - `HF_HOME` — optional, Hugging Face cache directory
+- `OPENAI_API_KEY` — required for `rag compose` when calling OpenAI (omit for `--dry-run` or compatible proxies).
+- `OPENAI_MODEL` — override default chat model (`gpt-4o-mini`).
+- `OPENAI_BASE_URL` — point to an OpenAI-compatible endpoint (e.g., `http://localhost:11434/v1` for Ollama).
+- `OPENAI_TEMPERATURE`, `OPENAI_TOP_P`, `OPENAI_TIMEOUT_SECS` — default sampling/timeout values for compose calls.
 
 Every command also accepts `--dsn` to override `DATABASE_URL`.
 
@@ -136,7 +140,23 @@ rag query "how to deploy on k8s" --show-context
 rag query "rust tokio" --feed 1 --since 2025-01-01
 ```
 
-7) Operational views
+7) Compose (LLM answer)
+```bash
+# Inspect retrieval plan without spending tokens
+rag compose "Summarize the latest vector index tuning notes." --feed 1 --since 7d --dry-run
+
+# Real call (requires OPENAI_API_KEY and embeddings)
+rag compose "Summarize the latest vector index tuning notes." \
+  --feed 1 \
+  --since 7d \
+  --max-tokens 800 \
+  --temperature 0.3
+```
+Notes:
+- Set `OPENAI_API_KEY` (or point `OPENAI_BASE_URL` to an OpenAI-compatible proxy) before running without `--dry-run`.
+- Compose reuses the query pipeline, so ensure feeds have been ingested, chunked, and embedded.
+
+8) Operational views
 ```bash
 # Overview
 rag stats
@@ -149,7 +169,7 @@ rag stats --doc 123
 rag stats --chunk 456
 ```
 
-8) Maintenance
+9) Maintenance
 ```bash
 # Reindex ivfflat; choose lists via heuristic (or override with --lists)
 rag reindex --apply
@@ -170,6 +190,7 @@ rag gc --feed 1 --fix-status --vacuum analyze --apply
 - `rag chunk [--since <win|date>] [--doc-id <id>] [--tokens-target <n>] [--overlap <n>] [--max-chunks-per-doc <n>] [--force] [--apply]` — produce `rag.chunk`
 - `rag embed [--model-id <id>] [--onnx-filename <path>] [--device cpu|cuda] [--dim <n>] [--batch <n>] [--max <n>] [--force] [--apply]` — write `rag.embedding`
 - `rag query <text> [--top-n <n>] [--topk <n>] [--doc-cap <n>] [--probes <k>] [--feed <id>] [--since <date|win>] [--show-context]` — ANN over embeddings
+- `rag compose <text> [--top-n <n>] [--topk <n>] [--doc-cap <n>] [--feed <id>] [--since <date|win>] [--model <llm>] [--system <prompt>] [--max-tokens <n>] [--temperature <f>] [--top-p <f>] [--dry-run]` — retrieve & send context to an LLM
 - `rag stats [--feed <id>] [--doc <id>] [--chunk <id>]` — operational views
 - `rag reindex [--lists <k>] [--apply]` — create/reindex/swap ivfflat index
 - `rag gc [--older-than <win|date>] [--feed <id>] [--max <n>] [--vacuum analyze|full|off] [--fix-status] [--drop-temp-indexes] [--apply]` — cleanup
