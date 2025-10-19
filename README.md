@@ -1,14 +1,26 @@
-# rag — Retrieval-Augmented Generation pipeline CLI
+# ⚠️ Work in Progress
 
-A fast, end‑to‑end RAG pipeline in Rust for:
+APIs, error handling, and resilience safeguards are evolving as I work through the roadmap tasks.
+
+## Roadmap
+
+- [ ] Harden the error-handling base: wrap SQLx calls with context, guard ingest/chunk/embed with per-item retries, emit structured failure envelopes, and publish operator runbooks.
+- [ ] Launch evaluation (evals) suite to benchmark retrieval quality and regression-test query plans.
+- [ ] Add support for additional embedding models and configuration presets.
+- [ ] Tune the IVFFlat ANN index lists, candidate sizes, and hybrid retrieval knobs to scale search quality.
+
+# ragfeed — Retrieval-Augmented Generation pipeline CLI (WIP)
+
+A reasonably fast, end‑to‑end RAG pipeline in Rust for:
 
 - Managing RSS feeds and ingesting articles
 - Cleaning and chunking text with an E5 tokenizer
 - Embedding chunks with ONNX (CPU or CUDA)
 - Querying with pgvector (ivfflat + cosine distance)
+- Composing answers with a local LLM
 - Operational stats, reindexing, and garbage collection
 
-The CLI is designed for both human‑friendly logs and machine‑readable JSON envelopes for automation.
+The CLI is designed for both human-friendly logs and machine-readable JSON envelopes for automation.
 
 ## Prerequisites
 
