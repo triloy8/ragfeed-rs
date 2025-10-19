@@ -18,6 +18,7 @@ mod maintenance;
 mod telemetry;
 mod pipeline;
 mod output;
+mod llm;
 
 #[derive(Parser)]
 #[command(name = "rag", about = "RAG pipeline CLI")]
