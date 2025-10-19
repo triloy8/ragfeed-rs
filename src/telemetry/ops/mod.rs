@@ -6,3 +6,4 @@ pub mod reindex;
 pub mod gc;
 pub mod stats;
 pub mod query;
+pub mod compose;

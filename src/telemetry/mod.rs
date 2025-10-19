@@ -15,3 +15,4 @@ pub fn reindex() -> LogCtx<ops::reindex::Reindex> { LogCtx { json: config::logs_
 pub fn gc() -> LogCtx<ops::gc::Gc> { LogCtx { json: config::logs_are_json(), _marker: std::marker::PhantomData } }
 pub fn stats() -> LogCtx<ops::stats::Stats> { LogCtx { json: config::logs_are_json(), _marker: std::marker::PhantomData } }
 pub fn query() -> LogCtx<ops::query::Query> { LogCtx { json: config::logs_are_json(), _marker: std::marker::PhantomData } }
+pub fn compose() -> LogCtx<ops::compose::Compose> { LogCtx { json: config::logs_are_json(), _marker: std::marker::PhantomData } }

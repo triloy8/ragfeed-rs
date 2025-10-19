@@ -19,6 +19,7 @@ mod telemetry;
 mod pipeline;
 mod output;
 mod llm;
+mod compose;
 
 #[derive(Parser)]
 #[command(name = "rag", about = "RAG pipeline CLI")]
@@ -40,6 +41,7 @@ enum Commands {
     Reindex(maintenance::reindex::ReindexCmd),
     Gc(maintenance::gc::GcCmd),
     Query(query::QueryCmd),
+    Compose(compose::ComposeCmd),
 }
 
 #[tokio::main]
@@ -66,6 +68,7 @@ async fn main() -> Result<()> {
         Commands::Reindex(args) => maintenance::reindex::run(&pool, args).await?,
         Commands::Gc(args) => maintenance::gc::run(&pool, args).await?,
         Commands::Query(args) => query::run(&pool, args).await?,
+        Commands::Compose(args) => compose::run(&pool, args).await?,
         // Commands::Eval => println!("TODO: eval"),
     }
 
