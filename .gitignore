@@ -3,3 +3,4 @@
 todo/*
 data/
 ollama_call.js
+test-compose.sh

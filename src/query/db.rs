@@ -1,7 +1,7 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use pgvector::Vector as PgVector;
-use sqlx::{PgPool, Row};
+use sqlx::{Executor, PgPool, Postgres, Row};
 
 #[derive(Clone)]
 pub struct CandRow {
@@ -36,12 +36,15 @@ pub async fn recommend_probes(pool: &PgPool) -> Result<Option<i32>> {
     Ok(lists.map(|k| (k / 10).max(1)))
 }
 
-pub async fn fetch_ann_candidates(
-    pool: &PgPool,
+pub async fn fetch_ann_candidates<'e, E>(
+    executor: E,
     qvec: &[f32],
     top_n: i64,
     opts: &FetchOpts,
-) -> Result<Vec<CandRow>> {
+) -> Result<Vec<CandRow>>
+where
+    E: Executor<'e, Database = Postgres>,
+{
     if opts.feed.is_none() && opts.since.is_none() {
         let rows = sqlx::query(
             r#"
@@ -60,7 +63,7 @@ pub async fn fetch_ann_candidates(
         .bind(top_n)
         .bind(opts.include_preview)
         .bind(opts.include_text)
-        .fetch_all(pool)
+        .fetch_all(executor)
         .await?;
         let out = rows
             .into_iter()
@@ -98,7 +101,7 @@ pub async fn fetch_ann_candidates(
     .bind(top_n)
     .bind(opts.include_preview)
     .bind(opts.include_text)
-    .fetch_all(pool)
+    .fetch_all(executor)
     .await?;
     let out = rows
         .into_iter()

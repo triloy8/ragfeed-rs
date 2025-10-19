@@ -1,6 +1,6 @@
 use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Utc};
-use sqlx::PgPool;
+use sqlx::{Acquire, PgPool};
 use std::collections::HashMap;
 use tracing::span::EnteredSpan;
 
@@ -81,17 +81,19 @@ pub async fn execute(
         Some(p) => Some(p.max(1)),
         None => db::recommend_probes(pool).await?,
     };
+    let mut conn = pool.acquire().await?;
+    let mut tx = conn.begin().await?;
+
     if let Some(p) = probes {
         let _set_probes_span = enter_span(log, &QueryPhase::SetProbes);
         let sql = format!("SET LOCAL ivfflat.probes = {}", p);
-        sqlx::query(&sql).execute(pool).await?;
+        sqlx::query(&sql).execute(&mut *tx).await?;
         drop(_set_probes_span);
     }
 
-    // fetch ANN candidates
     let _fetch_span = enter_span(log, &QueryPhase::FetchCandidates);
     let candidates = db::fetch_ann_candidates(
-        pool,
+        &mut *tx,
         &qvec,
         req.top_n.max(1),
         &FetchOpts {
@@ -103,6 +105,8 @@ pub async fn execute(
     )
     .await?;
     drop(_fetch_span);
+
+    tx.commit().await?;
 
     if candidates.is_empty() {
         if let Some(ctx) = log {
