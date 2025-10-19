@@ -3,12 +3,21 @@ use chrono::{DateTime, Utc};
 use pgvector::Vector as PgVector;
 use sqlx::{PgPool, Row};
 
+#[derive(Clone)]
 pub struct CandRow {
     pub chunk_id: i64,
     pub doc_id: i64,
     pub title: Option<String>,
     pub preview: Option<String>,
+    pub text: Option<String>,
     pub distance: f32,
+}
+
+pub struct FetchOpts {
+    pub feed: Option<i32>,
+    pub since: Option<DateTime<Utc>>,
+    pub include_preview: bool,
+    pub include_text: bool,
 }
 
 pub async fn recommend_probes(pool: &PgPool) -> Result<Option<i32>> {
@@ -29,18 +38,17 @@ pub async fn recommend_probes(pool: &PgPool) -> Result<Option<i32>> {
 
 pub async fn fetch_ann_candidates(
     pool: &PgPool,
-    qvec: &Vec<f32>,
+    qvec: &[f32],
     top_n: i64,
-    feed: Option<i32>,
-    since: Option<DateTime<Utc>>,
-    want_preview: bool,
+    opts: &FetchOpts,
 ) -> Result<Vec<CandRow>> {
-    if feed.is_none() && since.is_none() {
+    if opts.feed.is_none() && opts.since.is_none() {
         let rows = sqlx::query(
             r#"
             SELECT c.chunk_id, c.doc_id, d.source_title AS title,
                    (e.vec <-> $1) AS distance,
-                   CASE WHEN $3 THEN substring(c.text, 1, 300) ELSE NULL END AS preview
+                   CASE WHEN $3 THEN substring(c.text, 1, 300) ELSE NULL END AS preview,
+                   CASE WHEN $4 THEN c.text ELSE NULL END AS text
             FROM rag.embedding e
             JOIN rag.chunk c ON c.chunk_id = e.chunk_id
             JOIN rag.document d ON d.doc_id = c.doc_id
@@ -48,9 +56,10 @@ pub async fn fetch_ann_candidates(
             LIMIT $2
             "#
         )
-        .bind(PgVector::from(qvec.clone()))
+        .bind(PgVector::from(qvec.to_vec()))
         .bind(top_n)
-        .bind(want_preview)
+        .bind(opts.include_preview)
+        .bind(opts.include_text)
         .fetch_all(pool)
         .await?;
         let out = rows
@@ -60,6 +69,7 @@ pub async fn fetch_ann_candidates(
                 doc_id: row.get::<i64, _>("doc_id"),
                 title: row.get::<Option<String>, _>("title"),
                 preview: row.get::<Option<String>, _>("preview"),
+                text: row.get::<Option<String>, _>("text"),
                 distance: row.get::<f64, _>("distance") as f32,
             })
             .collect();
@@ -71,7 +81,8 @@ pub async fn fetch_ann_candidates(
         r#"
         SELECT c.chunk_id, c.doc_id, d.source_title AS title,
                (e.vec <-> $1) AS distance,
-               CASE WHEN $5 THEN substring(c.text, 1, 300) ELSE NULL END AS preview
+               CASE WHEN $5 THEN substring(c.text, 1, 300) ELSE NULL END AS preview,
+               CASE WHEN $6 THEN c.text ELSE NULL END AS text
         FROM rag.embedding e
         JOIN rag.chunk c ON c.chunk_id = e.chunk_id
         JOIN rag.document d ON d.doc_id = c.doc_id
@@ -81,11 +92,12 @@ pub async fn fetch_ann_candidates(
         LIMIT $4
         "#
     )
-    .bind(PgVector::from(qvec.clone()))
-    .bind(feed)
-    .bind(since)
+    .bind(PgVector::from(qvec.to_vec()))
+    .bind(opts.feed)
+    .bind(opts.since)
     .bind(top_n)
-    .bind(want_preview)
+    .bind(opts.include_preview)
+    .bind(opts.include_text)
     .fetch_all(pool)
     .await?;
     let out = rows
@@ -95,9 +107,9 @@ pub async fn fetch_ann_candidates(
             doc_id: row.get::<i64, _>("doc_id"),
             title: row.get::<Option<String>, _>("title"),
             preview: row.get::<Option<String>, _>("preview"),
+            text: row.get::<Option<String>, _>("text"),
             distance: row.get::<f64, _>("distance") as f32,
         })
         .collect();
     Ok(out)
 }
-

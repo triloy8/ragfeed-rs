@@ -1,19 +1,21 @@
-use anyhow::{bail, Context, Result};
+use anyhow::Result;
 use clap::Args;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
-use crate::encoder::{Device, E5Encoder};
-use crate::encoder::traits::Embedder;
 use crate::util::time::parse_since_opt;
 
+use crate::encoder::Device;
 use crate::telemetry::{self};
 use crate::telemetry::ops::query::Phase as QueryPhase;
 
 mod db;
 mod post;
+pub mod service;
 
 pub use post::QueryResultRow;
+
+use self::service::QueryRequest;
 
 #[derive(Args, Debug)]
 pub struct QueryCmd {
@@ -48,73 +50,37 @@ pub async fn run(pool: &PgPool, args: QueryCmd) -> Result<()> {
         ])
         .entered();
 
-    // ensure embeddings exist to learn dim
-    let _prep = log.span(&QueryPhase::Prepare).entered();
-    let dim_row = sqlx::query!("SELECT dim FROM rag.embedding LIMIT 1")
-        .fetch_optional(pool)
-        .await?;
-    if dim_row.is_none() {
-        log.info("ℹ️  No embeddings found. Run `rag embed` first.");
-        return Ok(());
-    }
-    let db_dim = dim_row.unwrap().dim as usize;
-
-    // build encoder and embed the query
-    let mut enc: Box<dyn Embedder> = {
-        let _s = log.span(&QueryPhase::Prepare).entered();
-        Box::new(E5Encoder::new(&args.model_id, args.onnx_filename.as_deref(), args.device)
-            .context("init encoder")?)
-    };
-    let qvec = {
-        let _s = log.span(&QueryPhase::EmbedQuery).entered();
-        enc.embed_query(&args.query).context("embed query")?
-    };
-    if qvec.len() != db_dim {
-        bail!("query embedding dim={} != DB dim={}", qvec.len(), db_dim);
-    }
-
-    // set probes
-    let probes = match args.probes {
-        Some(p) => Some(p.max(1)),
-        None => db::recommend_probes(pool).await?,
-    };
-    if let Some(p) = probes {
-        let _s = log.span(&QueryPhase::SetProbes).entered();
-        let sql = format!("SET LOCAL ivfflat.probes = {}", p);
-        sqlx::query(&sql).execute(pool).await?;
-    }
-
-    // filters
     let since_ts: Option<DateTime<Utc>> = parse_since_opt(&args.since)?;
 
-    // fetch ANN candidates
-    let _fetch = log.span(&QueryPhase::FetchCandidates).entered();
-    let candidates = db::fetch_ann_candidates(
+    let outcome = service::execute(
         pool,
-        &qvec,
-        args.top_n.max(1),
-        args.feed,
-        since_ts,
-        args.show_context,
+        QueryRequest {
+            query: &args.query,
+            top_n: args.top_n,
+            topk: args.topk,
+            doc_cap: args.doc_cap,
+            probes: args.probes,
+            feed: args.feed,
+            since: since_ts,
+            include_preview: args.show_context,
+            include_text: false,
+            model_id: &args.model_id,
+            onnx_filename: args.onnx_filename.as_deref(),
+            device: args.device,
+        },
+        Some(&log),
     )
     .await?;
-    drop(_fetch);
 
-    if candidates.is_empty() {
-        log.info("ℹ️  No results");
+    if outcome.rows.is_empty() {
         return Ok(());
     }
-
-    // post-filter and format
-    let _pf = log.span(&QueryPhase::PostFilter).entered();
-    let out_rows: Vec<QueryResultRow> = post::shape_results(candidates, args.topk, args.doc_cap);
-    drop(_pf);
 
     // output
     let _out_span = log.span(&QueryPhase::Output).entered();
     // Always log human-readable results
     log.info("🔍 Results:");
-    for r in &out_rows {
+    for r in &outcome.rows {
         log.info(format!(
             "#{}  dist={:.4}  chunk={} doc={}  {:?}",
             r.rank, r.distance, r.chunk_id, r.doc_id, r.title
@@ -124,7 +90,7 @@ pub async fn run(pool: &PgPool, args: QueryCmd) -> Result<()> {
         }
     }
     // Emit structured result to stdout (presenter-selected)
-    log.result(&out_rows)?;
+    log.result(&outcome.rows)?;
 
     Ok(())
 }

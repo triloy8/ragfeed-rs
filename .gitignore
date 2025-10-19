@@ -2,3 +2,4 @@
 .env
 todo/*
 data/
+ollama_call.js
