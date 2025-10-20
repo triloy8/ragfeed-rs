@@ -8,6 +8,7 @@ APIs, error handling, and resilience safeguards are evolving as I work through t
 - [ ] Launch evaluation (evals) suite to benchmark retrieval quality and regression-test query plans.
 - [ ] Add support for additional embedding models and configuration presets.
 - [ ] Tune the IVFFlat ANN index lists, candidate sizes, and hybrid retrieval knobs to scale search quality.
+- [ ] Clean up the ingestion logic and add more site-specific parsers.
 
 # ragfeed — Retrieval-Augmented Generation pipeline CLI (WIP)
 
