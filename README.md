@@ -4,11 +4,15 @@ APIs, error handling, and resilience safeguards are evolving as I work through t
 
 ## Roadmap
 
-- [ ] Harden the error-handling base: wrap SQLx calls with context, guard ingest/chunk/embed with per-item retries, emit structured failure envelopes, and publish operator runbooks.
-- [ ] Launch evaluation (evals) suite to benchmark retrieval quality and regression-test query plans.
-- [ ] Add support for additional embedding models and configuration presets.
-- [ ] Tune the IVFFlat ANN index lists, candidate sizes, and hybrid retrieval knobs to scale search quality.
-- [ ] Clean up the ingestion logic and add more site-specific parsers.
+- [ ] Harden the error-handling base: wrap SQLx calls with context, add durable feed-level retries/backoff, persist last-run markers, emit structured failure envelopes, and publish operator runbooks.
+- [ ] Launch evaluation (evals) suite to benchmark retrieval quality, regression-test query plans, and surface duplicate-detection heuristics that match the retrieval design.
+- [ ] Add support for additional embedding models, versioned vector storage (chunk + model), and configuration presets for swapping encoders safely.
+- [ ] Tune the IVFFlat ANN index lists, hybrid candidate sizes, per-doc caps, and freshness boosts to scale search quality while avoiding empty-result edge cases.
+- [ ] Expand feed lifecycle & ingest tooling: rename/deactivate/archive feeds, expose failure introspection in CLI, and add more site-specific parsers.
+- [ ] Expand `rag compose --dry-run` (and surface it via `rag query --show-compose`) to dump packed context, token counts, and draft completions so operators can diff retrieval vs compose without mutating state.
+- [ ] Extend feed metadata (`last_polled_at`, status history, failure counts) to power reliable scheduling and retry logic.
+- [ ] Broaden `rag stats` (or companion tooling) to surface stuck documents/chunks with timestamps and error history for debugging.
+- [ ] Define retention policies and soft-delete markers so `rag gc --apply` can safely purge or archive old documents.
 
 # ragfeed — Retrieval-Augmented Generation pipeline CLI (WIP)
 
