@@ -1,6 +1,6 @@
 # ⚠️ Work in Progress
 
-APIs, error handling, and resilience safeguards are evolving as I work through the roadmap tasks.
+This is a working prototype but APIs, error handling, and resilience safeguards are evolving as I work through the roadmap tasks. Things will break without notice for now.
 
 ## Roadmap
 
